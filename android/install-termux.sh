@@ -47,19 +47,22 @@ if old_auth in s:
 elif new_auth not in s:
     raise SystemExit("Não encontrei o ponto de inicialização da sessão. Nenhuma alteração foi feita.")
 
+needle0 = "  current.ev.on('connection.update',"
+s = s.replace(needle0, "  let pairingCodeRequested = false;\\n" + needle0, 1)
+
 needle = "    if (qr) {\n      setQr(qr);"
 replacement = """    if (qr) {
       const pairingNumber = (process.env.PAIRING_NUMBER || '').replace(/\\D/g, '');
       if (pairingNumber) {
-        if (!(globalThis as any).__stickersomPairingRequested) {
-          (globalThis as any).__stickersomPairingRequested = true;
+        if (!pairingCodeRequested) {
+          pairingCodeRequested = true;
           (async () => {
             try {
-              await new Promise(resolve => setTimeout(resolve, 5000));
               const code = await current.requestPairingCode(pairingNumber);
               console.log('\\nNovo código de vinculação do StickerSom: ' + code);
               console.log('No WhatsApp: Configurações > Aparelhos conectados > Conectar aparelho > Conectar com número de telefone.\\n');
             } catch (error) {
+              pairingCodeRequested = false;
               console.error('Não foi possível gerar o código de vinculação:', error);
             }
           })();
@@ -79,7 +82,7 @@ elif replacement2 not in s:
     raise SystemExit("Não encontrei o fechamento esperado do bloco QR. Nenhuma alteração foi feita.")
 
 p.write_text(s)
-print("Correção aplicada: sessão incompleta será limpa e o código será solicitado após 5 segundos.")
+print("Correção aplicada: o código será solicitado uma vez por conexão, inclusive após reconexão.")
 PY
 
 npm install
