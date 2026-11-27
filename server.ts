@@ -20,6 +20,7 @@ let qrDataUrl = '';
 let connectedPhone = '';
 let connectionState: 'connecting' | 'open' | 'close' = 'connecting';
 let pairingRegistered = false;
+let pairingReady = false;
 let lastPairingRequest = 0;
 let reconnectTimer: NodeJS.Timeout | undefined;
 let resettingSession = false;
@@ -56,8 +57,13 @@ async function connect() {
   pairingRegistered = !!state.creds.registered;
   current.ev.on('creds.update', saveCreds);
   current.ev.on('connection.update', async ({ connection, lastDisconnect, qr }) => {
-    if (qr) qrDataUrl = await QRCode.toDataURL(qr, { width: 320, margin: 2 });
+    if (qr) {
+      pairingReady = true;
+      qrDataUrl = await QRCode.toDataURL(qr, { width: 320, margin: 2 });
+      console.log('[StickerSom] Novo QR Code de pareamento disponível.');
+    }
     if (connection === 'open') {
+      pairingReady = false;
       connectionState = 'open';
       pairingRegistered = true;
       qrDataUrl = '';
@@ -65,6 +71,7 @@ async function connect() {
       console.log('[StickerSom] WhatsApp conectado:', connectedPhone);
     }
     if (connection === 'close' && socket === current) {
+      pairingReady = false;
       connectionState = 'close';
       connectedPhone = '';
       if (resettingSession) return;
@@ -165,6 +172,7 @@ if(!false) waitForConnection();
       clearTimeout(reconnectTimer);
       connectedPhone = '';
       pairingRegistered = false;
+      pairingReady = false;
       connectionState = 'connecting';
       qrDataUrl = '';
       try {
@@ -195,21 +203,30 @@ if(!false) waitForConnection();
       }
     }
     if (req.method === 'POST' && url.pathname === '/api/pairing-code') {
-      if (connectedPhone || pairingRegistered) return json(res, 409, { error: 'O WhatsApp já está conectado.' });
-      if (!socket || connectionState !== 'open') return json(res, 503, { error: 'O WhatsApp do StickerSom está reconectando. Aguarde alguns segundos e tente novamente ou use o QR Code.' });
-      if (Date.now() - lastPairingRequest < 60_000) return json(res, 429, { error: 'Aguarde 1 minuto antes de solicitar outro código.' });
+      if (connectedPhone || pairingRegistered) return json(res, 409, { error: 'O WhatsApp já está conectado. Limpe a sessão antes de gerar um novo pareamento.' });
       let body = '';
       for await (const chunk of req) body += chunk.toString();
       let phone = '';
       try { phone = String(JSON.parse(body).phone || '').replace(/\D/g, ''); } catch {}
       if (!/^\d{10,15}$/.test(phone)) return json(res, 400, { error: 'Informe o número com código do país, somente números.' });
+      if (Date.now() - lastPairingRequest < 60_000) return json(res, 429, { error: 'Aguarde 1 minuto antes de solicitar outro código.' });
+
+      // Um aparelho ainda não pareado nunca chega ao estado "open".
+      // A prontidão para pareamento é indicada pelo evento QR do Baileys.
+      const deadline = Date.now() + 15000;
+      while ((!socket || !pairingReady) && Date.now() < deadline) {
+        await new Promise(resolve => setTimeout(resolve, 250));
+      }
+      if (!socket || !pairingReady || pairingRegistered || connectedPhone) {
+        return json(res, 503, { error: 'O novo pareamento ainda está sendo preparado. Aguarde o QR Code aparecer e tente gerar o código novamente.' });
+      }
       try {
         lastPairingRequest = Date.now();
         const code = await socket.requestPairingCode(phone);
         return json(res, 200, { ok: true, code });
       } catch (error) {
         console.error('[StickerSom] Falha ao gerar código de pareamento:', error);
-        return json(res, 500, { error: 'O WhatsApp não conseguiu gerar o código. Tente pelo QR Code.' });
+        return json(res, 500, { error: 'O WhatsApp recusou a geração do código. Atualize a página e tente novamente.' });
       }
     }
     if (req.method === 'POST' && url.pathname === '/api/create') {
