@@ -1,7 +1,11 @@
 const $=id=>document.getElementById(id);
 const mediaFile=$('mediaFile'),audioFile=$('audioFile'),create=$('create');
 let mode='image-audio',media=null,audio=null,mediaUrl=null,audioUrl=null;
-async function checkStatus(){try{const r=await fetch('/api/status');const s=await r.json();$('connection').innerHTML=s.connected?'● WhatsApp conectado <span aria-hidden="true">↗</span>':'⌁ Conectar WhatsApp <span aria-hidden="true">↗</span>';$('connection').classList.toggle('ready',s.connected);}catch{$('connection').textContent='⌁ Conectar WhatsApp ↗';}}checkStatus();
+function closeConnectModal(){$('connectModal').hidden=true;}
+$('closeConnect').addEventListener('click',closeConnectModal);
+$('laterConnect').addEventListener('click',closeConnectModal);
+$('connectModal').addEventListener('click',e=>{if(e.target.classList.contains('connect-backdrop'))closeConnectModal();});
+async function checkStatus(){try{const r=await fetch('/api/status');const s=await r.json();$('connection').innerHTML=s.connected?'● WhatsApp conectado <span aria-hidden="true">↗</span>':'⌁ Conectar WhatsApp <span aria-hidden="true">↗</span>';$('connection').classList.toggle('ready',s.connected);if(!s.connected)$('connectModal').hidden=false;}catch{$('connection').textContent='⌁ Conectar WhatsApp ↗';$('connectModal').hidden=false;}}checkStatus();
 function updateMode(next){mode=next;document.querySelectorAll('.mode').forEach(b=>b.classList.toggle('active',b.dataset.mode===mode));const image=mode==='image-audio',original=mode==='video-original';$('mediaHeading').textContent=image?'Escolha sua imagem ou GIF':'Escolha seu vídeo';$('mediaTypes').textContent=image?'JPG, PNG, WebP ou GIF · até 16 MB':'MP4, MOV ou WebM · até 16 MB';mediaFile.accept=image?'image/*,.gif':'video/*';$('audioSection').hidden=original;$('controls').hidden=original||image||!media;if(media&&((image&&!media.type.startsWith('image/'))||(!image&&!media.type.startsWith('video/')))){media=null;mediaFile.value='';$('fileLabel').textContent='Selecionar arquivo';$('previewWrap').hidden=true;$('videoPreview').hidden=true;$('imagePreview').hidden=true;}if(original){audio=null;audioFile.value='';$('audioPreview').hidden=true;}validate();}
 document.querySelectorAll('.mode').forEach(b=>b.addEventListener('click',()=>updateMode(b.dataset.mode)));
 function validate(){create.disabled=!media||(mode!=='video-original'&&!audio);}
