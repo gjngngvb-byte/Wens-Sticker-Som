@@ -32,6 +32,8 @@ export type StickerOptions = {
   startSec?: number;
   /** Duração solicitada em segundos (máximo 10). */
   durationSec?: number;
+  /** Repete o trecho visual para alcançar a duração final do áudio. */
+  loopVideo?: boolean;
   /** Recebe o tempo de cada etapa, para medir desempenho. */
   onStep?: (step: string, ms: number) => void;
 };
@@ -106,9 +108,9 @@ async function encodeWebp(source: string, output: string, filter: string, qualit
  * Extrai o áudio do trecho usado: Ogg/Opus mono 48 kHz (o formato das mensagens de voz, que
  * toca em todos os aparelhos), com um fade curto nas pontas para não estalar quando repete.
  */
-async function extractAudio(source: string, seconds: number, output: string, startSec = 0): Promise<{ audio: Buffer; silent: boolean }> {
+async function extractAudio(source: string, seconds: number, output: string, startSec = 0, loopAudio = false): Promise<{ audio: Buffer; silent: boolean }> {
   const fadeOut = Math.max(0, seconds - 0.12).toFixed(3);
-  const { stderr } = await ffmpeg(['-loglevel', 'info', '-ss', startSec.toFixed(3), '-t', seconds.toFixed(3), '-i', source,
+  const { stderr } = await ffmpeg(['-loglevel', 'info', ...(loopAudio ? ['-stream_loop', '-1'] : []), '-ss', startSec.toFixed(3), '-t', seconds.toFixed(3), '-i', source,
     '-map', '0:a:0', '-vn', '-sn', '-dn', '-ac', '1', '-ar', '48000',
     '-af', `afade=t=in:d=0.02,afade=t=out:st=${fadeOut}:d=0.12,volumedetect`,
     '-c:a', 'libopus', '-b:a', '64k', '-application', 'audio', '-map_metadata', '-1', '-f', 'ogg', output], 60_000);
@@ -168,7 +170,9 @@ export async function createAnimatedSticker(input: Buffer, options: StickerOptio
     if (!info.hasVideo) throw new ConversionError('Não encontrei vídeo nesse arquivo.');
     const startSec = Math.max(0, options.startSec ?? 0);
     const available = Math.max(0, (info.durationSec ?? MAX_SECONDS) - startSec);
-    const seconds = Math.min(MAX_SECONDS, options.durationSec ?? MAX_SECONDS, available);
+    const seconds = options.loopVideo
+      ? Math.min(MAX_SECONDS, options.durationSec ?? MAX_SECONDS)
+      : Math.min(MAX_SECONDS, options.durationSec ?? MAX_SECONDS, available);
     if (seconds < 0.2) throw new ConversionError('O vídeo é curto demais (mínimo 0,2 s).');
 
     // Áudio em paralelo com todo o trabalho de imagem. Falha no áudio não derruba a figurinha.
@@ -180,7 +184,7 @@ export async function createAnimatedSticker(input: Buffer, options: StickerOptio
 
     // 1. Intermediário: enquadrado em 512, no máximo 15 quadros/s, só os primeiros 10 s.
     const baseFps = Math.min(15, Math.round(info.fps ?? 15)) || 15;
-    await timed('decodificar', () => ffmpeg(['-loglevel', 'error', '-ss', startSec.toFixed(3), '-t', seconds.toFixed(3), '-i', source,
+    await timed('decodificar', () => ffmpeg(['-loglevel', 'error', ...(options.loopVideo ? ['-stream_loop', '-1'] : []), '-ss', startSec.toFixed(3), '-t', seconds.toFixed(3), '-i', source,
       '-map', '0:v:0', '-an', '-sn', '-dn', '-vf', framingFilter(fit, baseFps),
       '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '10', '-pix_fmt', 'yuv444p', base], 120_000)
       .catch((error: unknown) => {
@@ -237,17 +241,30 @@ export async function createAnimatedSticker(input: Buffer, options: StickerOptio
 }
 
 
+/** Retorna a duração de uma faixa de áudio enviada pelo usuário. */
+export async function getAudioDuration(input: Buffer): Promise<number> {
+  checkInput(input);
+  return withTempDir(async dir => {
+    const source=join(dir,'audio-probe');
+    await writeFile(source,input);
+    const info=await probe(source);
+    if(!info.hasAudio) throw new ConversionError('Não encontrei uma faixa de áudio nesse arquivo.');
+    return Math.min(MAX_SECONDS,info.durationSec??MAX_SECONDS);
+  });
+}
+
 /** Converte áudio enviado separadamente para Ogg/Opus mono, limitado a 10 segundos. */
-export async function createAudioTrack(input: Buffer, maxSeconds = MAX_SECONDS): Promise<{ audio: Buffer; durationMs: number; silent: boolean }> {
+export async function createAudioTrack(input: Buffer, maxSeconds = MAX_SECONDS, loopAudio = false): Promise<{ audio: Buffer; durationMs: number; silent: boolean }> {
   checkInput(input);
   return withTempDir(async dir => {
     const source=join(dir,'audio-entrada'), output=join(dir,'audio.ogg');
     await writeFile(source,input);
     const info=await probe(source);
     if(!info.hasAudio) throw new ConversionError('Não encontrei uma faixa de áudio nesse arquivo.');
-    const seconds=Math.min(MAX_SECONDS,maxSeconds,info.durationSec??MAX_SECONDS);
+    const sourceSeconds=info.durationSec??MAX_SECONDS;
+    const seconds=Math.min(MAX_SECONDS,maxSeconds,loopAudio?maxSeconds:sourceSeconds);
     if(seconds<0.2) throw new ConversionError('O áudio é curto demais.');
-    const result=await extractAudio(source,seconds,output,0);
+    const result=await extractAudio(source,seconds,output,0,loopAudio&&sourceSeconds+0.02<seconds);
     return {audio:result.audio,durationMs:Math.round(seconds*1000),silent:result.silent};
   });
 }
