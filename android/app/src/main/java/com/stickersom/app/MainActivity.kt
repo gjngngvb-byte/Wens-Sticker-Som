@@ -47,7 +47,7 @@ class MainActivity : Activity() {
 
         choose.setOnClickListener { startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply { addCategory(Intent.CATEGORY_OPENABLE); type="video/*" },10) }
         startBar.setOnSeekBarChangeListener(listener { p -> startMs=(durationMs*p/10000L).toInt(); updateLabels() })
-        lengthBar.setOnSeekBarChangeListener(listener { p -> clipMs=min(10000,max(200,durationMs.toInt()*p/10000)); updateLabels() })
+        lengthBar.setOnSeekBarChangeListener(listener { p -> clipMs=min(10000,max(200,(durationMs*p/10000L).toInt())); updateLabels() })
         send.setOnClickListener { submitVideo() }
     }
 
