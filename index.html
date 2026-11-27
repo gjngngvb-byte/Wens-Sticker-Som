@@ -1,38 +1,14 @@
 <!doctype html>
-<html lang="pt-BR">
-<head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="theme-color" content="#111018"><meta name="description" content="Crie figurinhas animadas com som e receba pelo WhatsApp.">
-<title>StickerSom | Figurinhas com som</title><link rel="stylesheet" href="/styles.css">
-</head>
-<body>
-<header class="top"><a class="brand" href="/">♫ <span>sticker<strong>som</strong></span></a><span class="online" id="connection">Verificando WhatsApp…</span></header>
-<main>
-<section class="hero"><div class="eyebrow">FIGURINHAS QUE FALAM</div><h1>Seu vídeo.<br><span>Seu som. Sua figurinha.</span></h1><p>Escolha um vídeo, corte até 10 segundos e receba sua figurinha sonora diretamente no WhatsApp.</p></section>
-<section class="workspace">
-<div class="editor">
-<div class="section-title"><span>01</span><div><b>Escolha seu vídeo</b><small>MP4, MOV ou WebM · até 16 MB</small></div></div>
-<label class="drop" for="videoFile"><span class="upload">↑</span><b id="fileLabel">Toque para escolher um vídeo</b><small>Você também pode selecionar pela galeria do celular</small><input id="videoFile" type="file" accept="video/*"></label>
-<video id="preview" controls playsinline hidden></video>
-<div class="controls" id="controls" hidden>
-<label for="start">Início do corte <output id="startValue">0.0 s</output></label>
-<input id="start" type="range" min="0" max="0" step="0.1" value="0">
-<label for="duration">Duração <output id="durationValue">5 s</output></label>
-<input id="duration" type="range" min="2" max="10" step="0.5" value="5">
-</div>
-<button id="create" class="primary" disabled>♫ Criar figurinha sonora</button>
-<p id="status" class="status" role="status">Selecione um vídeo para começar.</p>
-</div>
-<div class="result" id="result" hidden>
-<div class="success">✓</div><h2>Sua figurinha está pronta!</h2><p>Seu código é válido por 15 minutos. Toque no botão abaixo e envie o código na conversa do StickerSom.</p>
-<div class="code" id="code">SS-000000</div>
-<button id="copy" class="secondary">Copiar código</button>
-<a id="send" class="primary send" href="#">Abrir WhatsApp e enviar código ↗</a>
-<p class="hint" id="sendHint">Depois de enviar o código, a figurinha sonora será entregue nessa mesma conversa.</p>
-</div>
-</section>
-<section class="steps"><div><span>01</span><b>Escolha</b><small>Envie seu vídeo</small></div><div><span>02</span><b>Recorte</b><small>Escolha até 10 segundos</small></div><div><span>03</span><b>Receba</b><small>Envie o código no WhatsApp</small></div></section>
-</main>
-<footer>StickerSom · Criado para dar voz às suas figurinhas.</footer>
-<script src="/app.js" defer></script>
-</body></html>
+<html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#f5f5f0"><meta name="description" content="Crie figurinhas sonoras nativas para o WhatsApp."><title>StickerSom | Figurinhas com som</title><link rel="stylesheet" href="/styles.css"></head><body>
+<header class="top"><a class="brand" href="/"><span class="brand-mark">♪</span><span>sticker<strong>som</strong></span></a><span class="online" id="connection">Conectando…</span></header>
+<main><section class="hero"><div class="eyebrow">SEU SOM. SUA FIGURINHA.</div><h1>Crie. Envie.<br><span>Surpreenda.</span></h1></section>
+<section class="workspace"><div class="mode-title"><span class="step-icon">✦</span><div><b>Como vamos criar?</b><small>Escolha um formato</small></div></div>
+<div class="modes"><button class="mode active" data-mode="image-audio"><span class="mode-icon">▧</span><b>Imagem / GIF</b><small>+ áudio</small></button><button class="mode" data-mode="video-audio"><span class="mode-icon">▶</span><b>Vídeo</b><small>+ outro áudio</small></button><button class="mode" data-mode="video-original"><span class="mode-icon">♫</span><b>Vídeo</b><small>som original</small></button></div>
+<div class="upload-heading"><span class="step-icon">↑</span><div><b id="mediaHeading">Escolha sua imagem ou GIF</b><small id="mediaTypes">JPG, PNG, WebP ou GIF · até 16 MB</small></div></div>
+<label class="drop" for="mediaFile"><span class="upload-icon">＋</span><b id="fileLabel">Selecionar arquivo</b><small>Toque para abrir sua galeria</small><input id="mediaFile" type="file" accept="image/*,.gif"></label>
+<div class="preview-wrap" id="previewWrap" hidden><video id="videoPreview" controls playsinline hidden></video><img id="imagePreview" alt="Prévia da figurinha" hidden></div>
+<div class="controls" id="controls" hidden><label for="start">✂️ Início <output id="startValue">0,0 s</output></label><input id="start" type="range" min="0" max="0" step="0.1" value="0"><label for="duration">⏱️ Duração <output id="durationValue">5 s</output></label><input id="duration" type="range" min="2" max="10" step="0.5" value="5"></div>
+<div id="audioSection"><div class="upload-heading audio-heading"><span class="step-icon">♫</span><div><b>Escolha o áudio</b><small>MP3, M4A, WAV, OGG ou AAC</small></div></div><label class="audio-drop" for="audioFile"><span>♫</span><b id="audioLabel">Adicionar áudio</b><input id="audioFile" type="file" accept="audio/*"></label><audio id="audioPreview" controls hidden></audio></div>
+<button id="create" class="primary" disabled><span>✦</span> Criar figurinha sonora</button><p id="status" class="status" role="status">Escolha os arquivos para começar.</p>
+<div class="result" id="result" hidden><div class="success">✓</div><h2>Figurinha pronta!</h2><div class="code" id="code">SS-000000</div><button id="copy" class="secondary">▢ Copiar código</button><a id="send" class="primary send" href="#">WhatsApp <span>↗</span></a><p class="hint">Envie o código nesta conversa. A figurinha chega por lá.</p></div></section>
+<section class="steps"><div><span>①</span><b>Escolha</b></div><div><span>②</span><b>Crie</b></div><div><span>③</span><b>Receba</b></div></section></main><footer>StickerSom <span>·</span> Figurinhas com som</footer><script src="/app.js" defer></script></body></html>
