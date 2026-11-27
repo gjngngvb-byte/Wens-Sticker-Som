@@ -235,3 +235,37 @@ export async function createAnimatedSticker(input: Buffer, options: StickerOptio
     };
   });
 }
+
+
+/** Converte áudio enviado separadamente para Ogg/Opus mono, limitado a 10 segundos. */
+export async function createAudioTrack(input: Buffer, maxSeconds = MAX_SECONDS): Promise<{ audio: Buffer; durationMs: number; silent: boolean }> {
+  checkInput(input);
+  return withTempDir(async dir => {
+    const source=join(dir,'audio-entrada'), output=join(dir,'audio.ogg');
+    await writeFile(source,input);
+    const info=await probe(source);
+    if(!info.hasAudio) throw new ConversionError('Não encontrei uma faixa de áudio nesse arquivo.');
+    const seconds=Math.min(MAX_SECONDS,maxSeconds,info.durationSec??MAX_SECONDS);
+    if(seconds<0.2) throw new ConversionError('O áudio é curto demais.');
+    const result=await extractAudio(source,seconds,output,0);
+    return {audio:result.audio,durationMs:Math.round(seconds*1000),silent:result.silent};
+  });
+}
+
+/** Transforma imagem parada em WebP animado para receber áudio como figurinha sonora. */
+export async function createImageSoundSticker(input: Buffer, meta?: StickerMetadata): Promise<StickerResult> {
+  checkInput(input);
+  return withTempDir(async dir => {
+    const source=join(dir,'imagem-entrada'),output=join(dir,'imagem-animada.webp');
+    await writeFile(source,input);
+    const info=await probe(source);
+    if(!info.hasVideo) throw new ConversionError('Não consegui ler essa imagem.');
+    const filter='fps=10,scale=512:512:force_original_aspect_ratio=increase:flags=lanczos,crop=512:512,setsar=1';
+    await ffmpeg(['-loglevel','error','-loop','1','-framerate','10','-t','10','-i',source,'-an','-vf',filter,'-c:v','libwebp_anim','-lossless','0','-quality','65','-compression_level','4','-loop','0','-f','webp',output],60000);
+    const sticker=withMetadata(await readFile(output),meta);
+    if(sticker.length>MAX_ANIMATED_BYTES) throw new ConversionError('A imagem ficou grande demais. Tente outra imagem.');
+    const webp=inspectWebp(sticker);
+    if(!webp.animated||webp.frames<2) throw new ConversionError('Não consegui animar essa imagem.');
+    return {sticker,animated:true,durationMs:webp.durationMs,trimmed:false,hasAudio:false};
+  });
+}
