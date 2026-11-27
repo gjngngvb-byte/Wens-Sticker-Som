@@ -48,7 +48,7 @@ elif new_auth not in s:
     raise SystemExit("Não encontrei o ponto de inicialização da sessão. Nenhuma alteração foi feita.")
 
 needle0 = "  current.ev.on('connection.update',"
-s = s.replace(needle0, "  let pairingCodeRequested = false;\\n" + needle0, 1)
+s = s.replace(needle0, "  let pairingCodeRequested = false;\n" + needle0, 1)
 
 needle = "    if (qr) {\n      setQr(qr);"
 replacement = """    if (qr) {
