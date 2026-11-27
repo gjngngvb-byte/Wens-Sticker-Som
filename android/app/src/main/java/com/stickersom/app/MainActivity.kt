@@ -39,7 +39,7 @@ class MainActivity : Activity() {
         startBar=SeekBar(this).apply { max=10000; isEnabled=false }; root.addView(startBar)
         lengthLabel=label("Duração: até 10 s",14f); root.addView(lengthLabel)
         lengthBar=SeekBar(this).apply { max=10000; progress=10000; isEnabled=false }; root.addView(lengthBar)
-        recipient=EditText(this).apply { hint="WhatsApp de destino (DDI + DDD + número)"; setHintTextColor(0xFF858FA3.toInt()); setTextColor(-1); inputType=3; singleLine=true }
+        recipient=EditText(this).apply { hint="WhatsApp de destino (DDI + DDD + número)"; setHintTextColor(0xFF858FA3.toInt()); setTextColor(-1); inputType=3; setSingleLine(true) }
         root.addView(recipient)
         send=Button(this).apply { text="Gerar figurinha sonora"; isEnabled=false }; root.addView(send)
         status=label("Deixe o bot StickerSom aberto no Termux.",13f,0xFFB9C1D2.toInt()).apply { setPadding(0,18,0,0) }; root.addView(status)
