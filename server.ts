@@ -114,8 +114,8 @@ const server = createServer(async (req, res) => {
       let body = '';
       for await (const chunk of req) body += chunk.toString();
       let phone = '';
-      try { phone = String(JSON.parse(body).phone || '').replace(/\\D/g, ''); } catch {}
-      if (!/^\\d{10,15}$/.test(phone)) return json(res, 400, { error: 'Informe o número com código do país, somente números.' });
+      try { phone = String(JSON.parse(body).phone || '').replace(/\D/g, ''); } catch {}
+      if (!/^\d{10,15}$/.test(phone)) return json(res, 400, { error: 'Informe o número com código do país, somente números.' });
       try {
         lastPairingRequest = Date.now();
         const code = await socket.requestPairingCode(phone);
