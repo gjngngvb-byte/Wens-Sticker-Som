@@ -59,15 +59,17 @@ async function connect() {
     }
   });
   current.ev.on('messages.upsert', async ({ messages, type }) => {
-    if (type !== 'notify') return;
+    // Mensagens enviadas pelo próprio aparelho podem chegar como "append"; mensagens recebidas chegam como "notify".
+    if (type !== 'notify' && type !== 'append') return;
     for (const msg of messages) {
-      const remoteJid = msg.key.remoteJid;
+      const remoteJid = msg.key.remoteJid || '';
       const ownNumber = current.user?.id?.split(':')[0]?.split('@')[0];
-      const chatNumber = remoteJid?.split(':')[0]?.split('@')[0];
-      const isOwnChat = !!ownNumber && chatNumber === ownNumber;
-      // Permite código enviado pelo próprio celular para a conversa consigo mesmo.
-      // Mensagens enviadas pelo bot em outras conversas continuam sendo ignoradas.
-      if (!msg.message || !remoteJid?.endsWith('@s.whatsapp.net') || (msg.key.fromMe && !isOwnChat)) continue;
+      const chatNumber = remoteJid.split(':')[0].split('@')[0];
+      const alternateNumber = msg.key.remoteJidAlt?.split(':')[0]?.split('@')[0];
+      const isOwnChat = !!ownNumber && (chatNumber === ownNumber || alternateNumber === ownNumber);
+      const isDirectChat = remoteJid.endsWith('@s.whatsapp.net') || remoteJid.endsWith('@lid');
+      // Aceita PN e LID no chat consigo mesmo, sem processar mensagens enviadas a terceiros.
+      if (!msg.message || !isDirectChat || (msg.key.fromMe && !isOwnChat)) continue;
       const code = messageText(msg).trim().toUpperCase();
       if (!/^SS-[A-F0-9]{6}$/.test(code)) continue;
       console.log('[StickerSom] Código de figurinha recebido na conversa:', remoteJid, 'selfChat:', isOwnChat);
