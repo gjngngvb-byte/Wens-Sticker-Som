@@ -73,7 +73,7 @@ async function makePending(sticker: Buffer, audio: Buffer, durationMs: number, m
   if (pending.size >= 100) throw new Error('O serviço está cheio. Tente novamente em alguns minutos.');
   let code = makeCode(); while (pending.has(code)) code = makeCode();
   const saved = await persistSticker(sticker, audio, meta);
-  code = 'SS-' + String(saved.id).toUpperCase();
+  code = 'SS-' + String(saved.id).slice(-6).toUpperCase();
   pending.set(code, { sticker, audio, durationMs, expires: Date.now() + MAX_AGE });
   console.log('[StickerSom] Figurinha criada e salva na galeria:', code, 'WhatsApp conectado:', !!connectedPhone);
   return { ok: true, code, expiresIn: 900, phone: connectedPhone, whatsappUrl: connectedPhone ? `https://wa.me/${connectedPhone}?text=${encodeURIComponent(code)}` : null };
@@ -129,7 +129,7 @@ async function connect() {
       // Aceita PN e LID no chat consigo mesmo, sem processar mensagens enviadas a terceiros.
       if (!msg.message || !isDirectChat || (msg.key.fromMe && !isOwnChat)) continue;
       const code = messageText(msg).trim().toUpperCase();
-      if (!/^SS-[A-F0-9-]{6,40}$/.test(code)) continue;
+      if (!/^SS-[A-F0-9]{6}$/.test(code)) continue;
       console.log('[StickerSom] Código de figurinha recebido na conversa:', remoteJid, 'selfChat:', isOwnChat);
       cleanExpired();
       let item = pending.get(code);
@@ -138,12 +138,11 @@ async function connect() {
           await sendSoundSticker(current, msg.key.remoteJid, { sticker: item.sticker, audio: item.audio, durationMs: item.durationMs });
           pending.delete(code);
         } else {
-          const id = code.slice(3).toLowerCase();
-          if (!/^[0-9a-f-]{36}$/.test(id)) throw new Error('Código inválido ou expirado.');
+          const suffix = code.slice(3).toLowerCase();
           const headers = { apikey: SUPABASE_KEY, authorization: `Bearer ${SUPABASE_KEY}` };
-          const lookup = await fetch(`${SUPABASE_URL}/rest/v1/stickers?select=media_path,audio_path&id=eq.${encodeURIComponent(id)}&limit=1`, { headers });
+          const lookup = await fetch(`${SUPABASE_URL}/rest/v1/stickers?select=media_path,audio_path&id=like.*${suffix}&limit=2`, { headers });
           const rows = lookup.ok ? await lookup.json() as Array<{media_path:string;audio_path:string}> : [];
-          if (!rows.length) throw new Error('Código não encontrado.');
+          if (rows.length !== 1) throw new Error(rows.length ? 'Código duplicado. Gere outra figurinha.' : 'Código não encontrado.');
           const row = rows[0];
           const [visual, audio] = await Promise.all([
             fetch(`${SUPABASE_URL}/storage/v1/object/public/stickersom-media/${row.media_path}`),
