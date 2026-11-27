@@ -17,6 +17,8 @@ const pending = new Map<string, { sticker: Buffer; audio: Buffer; durationMs: nu
 let socket: ReturnType<typeof makeWASocket> | undefined;
 let qrDataUrl = '';
 let connectedPhone = '';
+let pairingRegistered = false;
+let lastPairingRequest = 0;
 let reconnectTimer: NodeJS.Timeout | undefined;
 const rate = new Map<string, { count: number; reset: number }>();
 
@@ -39,10 +41,12 @@ async function connect() {
   const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
   const current = makeWASocket({ auth: state, logger, printQRInTerminal: false, markOnlineOnConnect: false, syncFullHistory: false });
   socket = current;
+  pairingRegistered = !!state.creds.registered;
   current.ev.on('creds.update', saveCreds);
   current.ev.on('connection.update', async ({ connection, lastDisconnect, qr }) => {
     if (qr) qrDataUrl = await QRCode.toDataURL(qr, { width: 320, margin: 2 });
     if (connection === 'open') {
+      pairingRegistered = true;
       qrDataUrl = '';
       connectedPhone = current.user?.id?.split(':')[0]?.split('@')[0] || '';
       console.log('[StickerSom] WhatsApp conectado:', connectedPhone);
@@ -100,12 +104,26 @@ const server = createServer(async (req, res) => {
       return json(res, 200, { ok: true, connected: !!connectedPhone, phone: connectedPhone });
     }
     if (req.method === 'GET' && url.pathname === '/pair') {
-      if (!qrDataUrl) {
-        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-        return res.end(`<!doctype html><meta name="viewport" content="width=device-width"><body style="font:16px system-ui;background:#111;color:#fff;display:grid;place-items:center;min-height:90vh;text-align:center"><main><h2>StickerSom</h2><p>${connectedPhone ? 'WhatsApp já conectado: +' + connectedPhone : 'Aguardando QR Code. Atualize esta página em alguns segundos.'}</p>${connectedPhone ? '' : '<meta http-equiv="refresh" content="5">'}</main></body>`);
-      }
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-      return res.end(`<!doctype html><meta name="viewport" content="width=device-width"><body style="font:16px system-ui;background:#111;color:#fff;display:grid;place-items:center;min-height:90vh;text-align:center"><main><h2>Conectar WhatsApp StickerSom</h2><p>WhatsApp → Aparelhos conectados → Conectar aparelho</p><img width="320" src="${qrDataUrl}"><p>Esta página atualiza automaticamente.</p><meta http-equiv="refresh" content="15"></main></body>`);
+      return res.end(`<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><title>Conectar WhatsApp | StickerSom</title><body style="font:16px system-ui;background:#111;color:#fff;display:grid;place-items:center;min-height:90vh;text-align:center;padding:20px"><main style="max-width:420px;width:100%"><h2>Conectar WhatsApp StickerSom</h2><p id="state">${connectedPhone ? 'WhatsApp já conectado: +' + connectedPhone : 'Escolha uma forma de conexão'}</p><section style="background:#201e29;padding:18px;border-radius:16px;margin:18px 0"><h3>Por código</h3><p>Digite o número que será conectado, com código do país. Ex.: 5511999999999</p><input id="phone" inputmode="numeric" autocomplete="tel" placeholder="5511999999999" style="box-sizing:border-box;width:100%;padding:14px;border-radius:9px;border:0;font-size:17px"><button id="request" style="margin-top:12px;width:100%;padding:14px;border:0;border-radius:9px;background:#9c6bff;color:white;font-weight:700;font-size:16px">Gerar código de pareamento</button><h1 id="paircode" style="letter-spacing:5px"></h1><p id="message" aria-live="polite">No WhatsApp: Aparelhos conectados → Conectar aparelho → Conectar com número de telefone</p></section><section style="background:#201e29;padding:18px;border-radius:16px"><h3>Ou use QR Code</h3>${qrDataUrl ? '<img width="280" style="max-width:100%" src="' + qrDataUrl + '">' : '<p>QR Code aparecerá aqui se a conexão por QR estiver disponível.</p>'}<p>WhatsApp → Aparelhos conectados → Conectar aparelho</p></section><script>document.getElementById('request').onclick=async()=>{const phone=document.getElementById('phone').value.replace(/\\D/g,'');const msg=document.getElementById('message');const btn=document.getElementById('request');document.getElementById('paircode').textContent='';msg.textContent='Solicitando código…';btn.disabled=true;try{const r=await fetch('/api/pairing-code',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({phone})});const d=await r.json();if(!r.ok)throw new Error(d.error||'Não foi possível gerar o código.');document.getElementById('paircode').textContent=d.code;msg.textContent='No celular, abra Aparelhos conectados → Conectar aparelho → Conectar com número de telefone e digite este código.'}catch(e){msg.textContent=e.message}finally{btn.disabled=false}};</script>${connectedPhone ? '' : '<meta http-equiv="refresh" content="30">'}</main></body>`);
+    }
+    if (req.method === 'POST' && url.pathname === '/api/pairing-code') {
+      if (connectedPhone || pairingRegistered) return json(res, 409, { error: 'O WhatsApp já está conectado.' });
+      if (!socket) return json(res, 503, { error: 'WhatsApp ainda está iniciando. Tente novamente em alguns segundos.' });
+      if (Date.now() - lastPairingRequest < 60_000) return json(res, 429, { error: 'Aguarde 1 minuto antes de solicitar outro código.' });
+      let body = '';
+      for await (const chunk of req) body += chunk.toString();
+      let phone = '';
+      try { phone = String(JSON.parse(body).phone || '').replace(/\\D/g, ''); } catch {}
+      if (!/^\\d{10,15}$/.test(phone)) return json(res, 400, { error: 'Informe o número com código do país, somente números.' });
+      try {
+        lastPairingRequest = Date.now();
+        const code = await socket.requestPairingCode(phone);
+        return json(res, 200, { ok: true, code });
+      } catch (error) {
+        console.error('[StickerSom] Falha ao gerar código de pareamento:', error);
+        return json(res, 500, { error: 'O WhatsApp não conseguiu gerar o código. Tente pelo QR Code.' });
+      }
     }
     if (req.method === 'POST' && url.pathname === '/api/create') {
       const ip = req.socket.remoteAddress || 'unknown';
