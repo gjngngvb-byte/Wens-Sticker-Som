@@ -151,6 +151,26 @@ async function connect() {
 const server = createServer(async (req, res) => {
   try {
     const url = new URL(req.url || '/', 'http://localhost');
+    if (req.method === 'POST' && url.pathname === '/api/send-package') {
+      if (!socket || !connectedPhone) return json(res, 409, { error: 'Conecte o WhatsApp antes de enviar.' });
+      let body=''; for await (const chunk of req) body += chunk.toString();
+      let ids:string[]=[]; try { ids=JSON.parse(body).ids; } catch {}
+      if (!Array.isArray(ids) || !ids.length || ids.length>50 || ids.some(x=>typeof x!=='string')) return json(res,400,{error:'Selecione de 1 a 50 figurinhas.'});
+      const headers={apikey:SUPABASE_KEY,authorization:`Bearer ${SUPABASE_KEY}`};
+      const query=new URLSearchParams({select:'id,media_path,audio_path',id:`in.(${ids.join(',')})`});
+      const rowsResponse=await fetch(`${SUPABASE_URL}/rest/v1/stickers?${query}`,{headers});
+      if(!rowsResponse.ok)throw new Error('Não consegui localizar as figurinhas selecionadas.');
+      const rows=await rowsResponse.json() as Array<{id:string;media_path:string;audio_path:string}>;
+      if(rows.length!==ids.length)return json(res,404,{error:'Uma ou mais figurinhas não foram encontradas.'});
+      let sent=0;
+      for(const row of rows){
+        const [visual,audio]=await Promise.all([fetch(`${SUPABASE_URL}/storage/v1/object/${'public'}/stickersom-media/${row.media_path}`),fetch(`${SUPABASE_URL}/storage/v1/object/public/stickersom-media/${row.audio_path}`)]);
+        if(!visual.ok||!audio.ok)throw new Error('Falha ao baixar uma mídia da galeria.');
+        await sendSoundSticker(socket,`${connectedPhone}@s.whatsapp.net`,{sticker:Buffer.from(await visual.arrayBuffer()),audio:Buffer.from(await audio.arrayBuffer()),durationMs:10000});
+        sent++;
+      }
+      return json(res,200,{ok:true,sent});
+    }
     if (req.method === 'GET' && url.pathname === '/api/gallery') {
       const category = url.searchParams.get('category') || '';
       return json(res, 200, { ok: true, stickers: await listStickers(category) });
