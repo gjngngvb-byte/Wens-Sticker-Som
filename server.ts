@@ -151,6 +151,16 @@ async function connect() {
 const server = createServer(async (req, res) => {
   try {
     const url = new URL(req.url || '/', 'http://localhost');
+    if (req.method === 'POST' && url.pathname === '/api/send-created') {
+      if (!socket || !connectedPhone) return json(res,409,{error:'Conecte o WhatsApp antes de enviar.'});
+      let body=''; for await(const chunk of req) body+=chunk.toString();
+      let code=''; try{code=String(JSON.parse(body).code||'').toUpperCase();}catch{}
+      const item=pending.get(code);
+      if(!item)return json(res,404,{error:'Esta criação não está mais na fila de envio. Ela continua salva na galeria.'});
+      await sendSoundSticker(socket,`${connectedPhone}@s.whatsapp.net`,{sticker:item.sticker,audio:item.audio,durationMs:item.durationMs});
+      pending.delete(code);
+      return json(res,200,{ok:true});
+    }
     if (req.method === 'POST' && url.pathname === '/api/send-package') {
       if (!socket || !connectedPhone) return json(res, 409, { error: 'Conecte o WhatsApp antes de enviar.' });
       let body=''; for await (const chunk of req) body += chunk.toString();
@@ -330,11 +340,12 @@ if(!false) waitForConnection();
       prepared.delete(id);
       return json(res,200,await makePending(item.sticker,sound.audio,sound.durationMs,(item as any).meta));
     }
+    if (req.method === 'GET' && url.pathname === '/gallery') { const page=await readFile('gallery.html'); res.writeHead(200,{'content-type':'text/html; charset=utf-8'}); return res.end(page); }
     if (req.method === 'GET' && url.pathname === '/') {
       const html = await readFile('index.html');
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); return res.end(html);
     }
-    if (req.method === 'GET' && ['/app.js','/styles.css'].includes(url.pathname)) {
+    if (req.method === 'GET' && ['/app.js','/styles.css','/menu.js','/gallery.js'].includes(url.pathname)) {
       const file = await readFile('.' + url.pathname);
       res.writeHead(200, { 'content-type': url.pathname.endsWith('.js') ? 'text/javascript; charset=utf-8' : 'text/css; charset=utf-8' });
       return res.end(file);
