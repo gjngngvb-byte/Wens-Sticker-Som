@@ -5,10 +5,12 @@ import { extname, join, normalize } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import makeWASocket, { DisconnectReason, useMultiFileAuthState, type WAMessage } from '@whiskeysockets/baileys';
 import QRCode from 'qrcode';
+import pino from 'pino';
 import { createAnimatedSticker, MAX_INPUT_BYTES } from './src/convert.js';
 import { sendSoundSticker } from './src/sound-sticker.js';
 
 const PORT = Number(process.env.PORT || 3000);
+const logger = pino({ level: process.env.LOG_LEVEL || 'silent' });
 const AUTH_DIR = process.env.AUTH_DIR || (existsSync('/var/data') ? '/var/data/stickersom-session' : './data/session');
 const MAX_AGE = 15 * 60 * 1000;
 const pending = new Map<string, { sticker: Buffer; audio: Buffer; durationMs: number; expires: number }>();
@@ -35,7 +37,7 @@ function makeCode() { return 'SS-' + randomBytes(3).toString('hex').toUpperCase(
 async function connect() {
   await mkdir(AUTH_DIR, { recursive: true });
   const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
-  const current = makeWASocket({ auth: state, printQRInTerminal: false, markOnlineOnConnect: false, syncFullHistory: false });
+  const current = makeWASocket({ auth: state, logger, printQRInTerminal: false, markOnlineOnConnect: false, syncFullHistory: false });
   socket = current;
   current.ev.on('creds.update', saveCreds);
   current.ev.on('connection.update', async ({ connection, lastDisconnect, qr }) => {
