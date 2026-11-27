@@ -1,31 +1,43 @@
-# StickerSom para Android (teste experimental)
+# StickerSom Android
 
-Este modo não usa WhatsApp Web no navegador. O processamento roda localmente no Android pelo Termux, e o WhatsApp é conectado como um aparelho vinculado usando código numérico (sem precisar escanear QR na mesma tela).
+O projeto tem duas partes: o **app Android** (editor visual) e o **motor local no Termux** (conexão WhatsApp e envio da figurinha sonora). Os dois precisam estar no mesmo aparelho.
 
-## Instalação
+## 1. Instalar/atualizar o motor no Termux
 
-1. Instale **Termux** pela página oficial do projeto: https://termux.dev/
-2. Abra o Termux e execute:
+Instale o Termux pela fonte oficial: https://termux.dev/
+
+No Termux, execute:
 
 ```sh
 pkg install -y curl
-curl -L https://raw.githubusercontent.com/gjngngvb-byte/Wens-Sticker-Som/main/android/install-termux.sh -o install-stickersom.sh
+curl -fL https://raw.githubusercontent.com/gjngngvb-byte/Wens-Sticker-Som/main/android/install-termux.sh -o install-stickersom.sh
 bash install-stickersom.sh
 ```
 
-3. Informe seu número com DDI e DDD quando solicitado.
-4. O Termux mostrará um código de vinculação.
-5. No WhatsApp Android, abra **Configurações → Aparelhos conectados → Conectar aparelho → Conectar com número de telefone** e informe o código.
+O instalador preserva a pasta de sessão existente. Se o WhatsApp já estiver conectado, não é necessário vincular novamente. Mantenha o processo do bot aberto no Termux. Quando aparecer `[StickerSom] API local pronta`, o app já pode conversar com o motor.
 
-## Como testar
+## 2. Instalar o aplicativo
 
-Depois que o bot conectar, envie um vídeo com a legenda `!som` para uma conversa com você mesmo. O bot deverá responder no mesmo chat com uma figurinha sonora. Para usar uma conversa diferente, encaminhe o vídeo para o número vinculado ou envie o vídeo com `!som` na conversa desejada.
+O APK de teste é gerado automaticamente pelo GitHub Actions. Abra a aba **Actions** deste repositório, selecione **Build StickerSom APK**, abra a execução mais recente concluída e baixe o artefato **StickerSom-debug-apk**. Extraia o ZIP e instale `app-debug.apk` no Android.
 
-## Limitações e segurança
+## 3. Criar uma figurinha sonora
 
-- **Teste experimental, não oficial.** O envio usa engenharia reversa do protocolo WhatsApp via Baileys. Uma atualização do WhatsApp pode interromper o funcionamento.
-- A conexão aparece em **Aparelhos conectados**. Você pode revogá-la a qualquer momento nessa tela.
-- Automação por cliente não oficial pode violar os termos do WhatsApp e causar restrições ou bloqueio da conta. Para o primeiro teste, prefira um número secundário.
-- Não compartilhe o código de vinculação, a pasta de sessão ou arquivos de autenticação.
-- O telefone precisa permanecer ligado e o Termux pode precisar de exclusão da otimização de bateria para manter o processo ativo.
-- Este método não transforma o StickerSom em um aplicativo APK independente; é um teste Android local pelo Termux. O editor visual do site continua separado.
+1. Abra o StickerSom e escolha um vídeo.
+2. Ajuste o início e a duração do trecho (até 10 segundos).
+3. Informe o número de destino com DDI + DDD.
+4. Toque em **Gerar figurinha sonora**.
+
+O app envia o vídeo diretamente ao motor local em `127.0.0.1`; a mídia não passa por um servidor StickerSom. O motor converte para WebP animado e áudio Ogg/Opus e envia a mensagem sonora pelo WhatsApp conectado.
+
+## Requisitos e limites
+
+- Android 6.0 ou superior.
+- Termux e o bot precisam permanecer ativos no mesmo aparelho.
+- Vídeo de até 16 MB; trecho de até 10 segundos.
+- O número de destino deve incluir código do país, DDD e telefone.
+- O destinatário precisa ter uma versão do WhatsApp capaz de reproduzir figurinhas sonoras.
+- O envio usa um protocolo não oficial via Baileys e engenharia reversa. Pode parar de funcionar após atualizações e pode gerar restrições na conta. É experimental; considere usar um número secundário.
+
+## Privacidade e segurança
+
+A API escuta apenas em `127.0.0.1`, não na rede Wi-Fi. Não compartilhe o código de vinculação, a pasta `sessao` ou os arquivos de autenticação. Revogue o aparelho vinculado em **WhatsApp → Aparelhos conectados** quando quiser.
