@@ -6,7 +6,7 @@ import { randomBytes } from 'node:crypto';
 import makeWASocket, { DisconnectReason, useMultiFileAuthState, type WAMessage } from '@whiskeysockets/baileys';
 import QRCode from 'qrcode';
 import pino from 'pino';
-import { createAnimatedSticker, createImageSoundSticker, createAudioTrack, MAX_INPUT_BYTES } from './src/convert.js';
+import { createAnimatedSticker, createImageSoundSticker, createAudioTrack, getAudioDuration, MAX_INPUT_BYTES } from './src/convert.js';
 import { sendSoundSticker } from './src/sound-sticker.js';
 
 const PORT = Number(process.env.PORT || 3000);
@@ -42,7 +42,7 @@ async function listStickers(category = '') {
   return (await response.json()).map((item: any) => ({ ...item, media_url: `${SUPABASE_URL}/storage/v1/object/public/stickersom-media/${item.media_path}`, audio_url: item.audio_path ? `${SUPABASE_URL}/storage/v1/object/public/stickersom-media/${item.audio_path}` : null }));
 }
 const pending = new Map<string, { sticker: Buffer; audio: Buffer; durationMs: number; expires: number }>();
-const prepared = new Map<string, { sticker: Buffer; durationMs: number; expires: number; meta: StickerMeta }>();
+const prepared = new Map<string, { sticker: Buffer; source: Buffer; startSec: number; durationMs: number; videoDurationSec: number; expires: number; meta: StickerMeta }>();
 let socket: ReturnType<typeof makeWASocket> | undefined;
 let qrDataUrl = '';
 let connectedPhone = '';
@@ -354,7 +354,7 @@ if(!false) waitForConnection();
       cleanExpired();
       if(prepared.size>=100)return json(res,503,{error:'O serviço está cheio. Tente novamente em alguns minutos.'});
       const uploadId=randomBytes(18).toString('hex');
-      prepared.set(uploadId,{sticker:visual.sticker,durationMs:visual.durationMs,expires:Date.now()+MAX_AGE,meta});
+      prepared.set(uploadId,{sticker:visual.sticker,source:input,startSec,durationMs:visual.durationMs,videoDurationSec:visual.durationMs/1000,expires:Date.now()+MAX_AGE,meta});
       return json(res,200,{ok:true,uploadId});
     }
     if(req.method==='POST'&&url.pathname==='/api/attach-audio'){
@@ -363,10 +363,18 @@ if(!false) waitForConnection();
       const chunks:Buffer[]=[];let total=0;
       for await(const chunk of req){const b=Buffer.isBuffer(chunk)?chunk:Buffer.from(chunk);total+=b.length;if(total>MAX_INPUT_BYTES){json(res,413,{error:'O áudio ultrapassa 16 MB.'});req.destroy();return;}chunks.push(b);}
       if(!total)return json(res,400,{error:'Escolha um arquivo de áudio.'});
-      const sound=await createAudioTrack(Buffer.concat(chunks),Math.min(10,item.durationMs/1000));
+      const audioInput=Buffer.concat(chunks);
+      const audioDuration=await getAudioDuration(audioInput);
+      const finalDuration=Math.min(10,Math.max(item.videoDurationSec,audioDuration));
+      let finalSticker=item.sticker;
+      if(finalDuration>item.videoDurationSec+0.03){
+        const extended=await createAnimatedSticker(item.source,{fit:'cortar',startSec:item.startSec,durationSec:finalDuration,loopVideo:true,meta:{packName:'StickerSom',publisher:'StickerSom'}});
+        finalSticker=extended.sticker;
+      }
+      const sound=await createAudioTrack(audioInput,finalDuration,audioDuration+0.02<finalDuration);
       if(sound.silent)return json(res,422,{error:'O áudio está em silêncio. Escolha outro arquivo.'});
       prepared.delete(id);
-      return json(res,200,await makePending(item.sticker,sound.audio,sound.durationMs,(item as any).meta));
+      return json(res,200,await makePending(finalSticker,sound.audio,Math.round(finalDuration*1000),(item as any).meta));
     }
     if (req.method === 'GET' && url.pathname === '/gallery') { const page=await readFile('gallery.html'); res.writeHead(200,{'content-type':'text/html; charset=utf-8'}); return res.end(page); }
     if (req.method === 'GET' && url.pathname === '/') {
