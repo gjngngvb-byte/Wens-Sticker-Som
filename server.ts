@@ -18,6 +18,7 @@ const prepared = new Map<string, { sticker: Buffer; durationMs: number; expires:
 let socket: ReturnType<typeof makeWASocket> | undefined;
 let qrDataUrl = '';
 let connectedPhone = '';
+let connectionState: 'connecting' | 'open' | 'close' = 'connecting';
 let pairingRegistered = false;
 let lastPairingRequest = 0;
 let reconnectTimer: NodeJS.Timeout | undefined;
@@ -55,12 +56,14 @@ async function connect() {
   current.ev.on('connection.update', async ({ connection, lastDisconnect, qr }) => {
     if (qr) qrDataUrl = await QRCode.toDataURL(qr, { width: 320, margin: 2 });
     if (connection === 'open') {
+      connectionState = 'open';
       pairingRegistered = true;
       qrDataUrl = '';
       connectedPhone = current.user?.id?.split(':')[0]?.split('@')[0] || '';
       console.log('[StickerSom] WhatsApp conectado:', connectedPhone);
     }
     if (connection === 'close' && socket === current) {
+      connectionState = 'close';
       connectedPhone = '';
       const status = (lastDisconnect?.error as { output?: { statusCode?: number } })?.output?.statusCode;
       if (status === DisconnectReason.loggedOut) {
@@ -110,13 +113,19 @@ const server = createServer(async (req, res) => {
   try {
     const url = new URL(req.url || '/', 'http://localhost');
     if (req.method === 'GET' && url.pathname === '/api/status') {
-      return json(res, 200, { ok: true, connected: !!connectedPhone, phone: connectedPhone });
+      return json(res, 200, { ok: true, connected: !!connectedPhone, phone: connectedPhone, connectionState });
+    }
+    if (req.method === 'GET' && url.pathname === '/api/qr') {
+      return json(res, 200, { ok: true, qr: qrDataUrl, connected: !!connectedPhone });
     }
     if (req.method === 'GET' && url.pathname === '/pair') {
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-      return res.end(`<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><title>Conectar WhatsApp | StickerSom</title><body style="font:16px system-ui;background:#111;color:#fff;display:grid;place-items:center;min-height:90vh;text-align:center;padding:20px"><main style="max-width:420px;width:100%"><h2>Conectar WhatsApp StickerSom</h2><p id="state">${connectedPhone ? 'WhatsApp já conectado: +' + connectedPhone : 'Escolha uma forma de conexão'}</p><section style="background:#201e29;padding:18px;border-radius:16px;margin:18px 0"><h3>Por código</h3><p>Digite o número que será conectado, com código do país. Ex.: 5511999999999</p><input id="phone" inputmode="numeric" autocomplete="tel" placeholder="5511999999999" style="box-sizing:border-box;width:100%;padding:14px;border-radius:9px;border:0;font-size:17px"><button id="request" style="margin-top:12px;width:100%;padding:14px;border:0;border-radius:9px;background:#9c6bff;color:white;font-weight:700;font-size:16px">Gerar código de pareamento</button><h1 id="paircode" style="letter-spacing:5px"></h1><p id="message" aria-live="polite">No WhatsApp: Aparelhos conectados → Conectar aparelho → Conectar com número de telefone</p></section><section style="background:#201e29;padding:18px;border-radius:16px"><h3>Ou use QR Code</h3>${qrDataUrl ? '<img width="280" style="max-width:100%" src="' + qrDataUrl + '">' : '<p>QR Code aparecerá aqui se a conexão por QR estiver disponível.</p>'}<p>WhatsApp → Aparelhos conectados → Conectar aparelho</p></section><script>document.getElementById('request').onclick=async()=>{const phone=document.getElementById('phone').value.replace(/\\D/g,'');const msg=document.getElementById('message');const btn=document.getElementById('request');document.getElementById('paircode').textContent='';msg.textContent='Solicitando código…';btn.disabled=true;try{const r=await fetch('/api/pairing-code',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({phone})});const d=await r.json();if(!r.ok)throw new Error(d.error||'Não foi possível gerar o código.');document.getElementById('paircode').textContent=d.code;msg.textContent='No celular, abra Aparelhos conectados → Conectar aparelho → Conectar com número de telefone e digite este código.'}catch(e){msg.textContent=e.message}finally{btn.disabled=false}};</script><script>
+      return res.end(`<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><title>Conectar WhatsApp | StickerSom</title><body style="font:16px system-ui;background:#111;color:#fff;display:grid;place-items:center;min-height:90vh;text-align:center;padding:20px"><main style="max-width:420px;width:100%"><h2>Conectar WhatsApp StickerSom</h2><p id="state">${connectedPhone ? 'WhatsApp já conectado: +' + connectedPhone : 'Escolha uma forma de conexão'}</p><section style="background:#201e29;padding:18px;border-radius:16px;margin:18px 0"><h3>Por código</h3><p>Digite o número que será conectado, com código do país. Ex.: 5511999999999</p><input id="phone" inputmode="numeric" autocomplete="tel" placeholder="5511999999999" style="box-sizing:border-box;width:100%;padding:14px;border-radius:9px;border:0;font-size:17px"><button id="request" style="margin-top:12px;width:100%;padding:14px;border:0;border-radius:9px;background:#9c6bff;color:white;font-weight:700;font-size:16px">Gerar código de pareamento</button><h1 id="paircode" style="letter-spacing:5px"></h1><p id="message" aria-live="polite">No WhatsApp: Aparelhos conectados → Conectar aparelho → Conectar com número de telefone</p></section><section style="background:#201e29;padding:18px;border-radius:16px"><h3>Ou use QR Code</h3><img id="qrImage" width="280" style="max-width:100%;display:none" alt="QR Code para conectar WhatsApp"><p id="qrHint">Aguardando QR Code…</p><p>WhatsApp → Aparelhos conectados → Conectar aparelho</p></section><script>document.getElementById('request').onclick=async()=>{const phone=document.getElementById('phone').value.replace(/\\D/g,'');const msg=document.getElementById('message');const btn=document.getElementById('request');document.getElementById('paircode').textContent='';msg.textContent='Solicitando código…';btn.disabled=true;try{const r=await fetch('/api/pairing-code',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({phone})});const d=await r.json();if(!r.ok)throw new Error(d.error||'Não foi possível gerar o código.');document.getElementById('paircode').textContent=d.code;msg.textContent='No celular, abra Aparelhos conectados → Conectar aparelho → Conectar com número de telefone e digite este código.'}catch(e){msg.textContent=e.message}finally{btn.disabled=false}};</script><script>
 const state=document.getElementById('state');
-let wasConnected=false;
+const qrImage=document.getElementById('qrImage');
+const qrHint=document.getElementById('qrHint');
+async function refreshQr(){try{const r=await fetch('/api/qr',{cache:'no-store'});const d=await r.json();if(d.qr){qrImage.src=d.qr;qrImage.style.display='inline-block';qrHint.textContent='Leia este código com o WhatsApp.';}else if(!d.connected){qrImage.style.display='none';qrHint.textContent='Aguardando o WhatsApp disponibilizar o QR Code…';}}catch{}setTimeout(refreshQr,2000);}
+refreshQr();
 async function waitForConnection(){
   try{
     const r=await fetch('/api/status',{cache:'no-store'});
@@ -134,7 +143,7 @@ if(!false) waitForConnection();
     }
     if (req.method === 'POST' && url.pathname === '/api/pairing-code') {
       if (connectedPhone || pairingRegistered) return json(res, 409, { error: 'O WhatsApp já está conectado.' });
-      if (!socket) return json(res, 503, { error: 'WhatsApp ainda está iniciando. Tente novamente em alguns segundos.' });
+      if (!socket || connectionState !== 'open') return json(res, 503, { error: 'O WhatsApp do StickerSom está reconectando. Aguarde alguns segundos e tente novamente ou use o QR Code.' });
       if (Date.now() - lastPairingRequest < 60_000) return json(res, 429, { error: 'Aguarde 1 minuto antes de solicitar outro código.' });
       let body = '';
       for await (const chunk of req) body += chunk.toString();
