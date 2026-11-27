@@ -61,9 +61,16 @@ async function connect() {
   current.ev.on('messages.upsert', async ({ messages, type }) => {
     if (type !== 'notify') return;
     for (const msg of messages) {
-      if (!msg.message || msg.key.fromMe || !msg.key.remoteJid?.endsWith('@s.whatsapp.net')) continue;
+      const remoteJid = msg.key.remoteJid;
+      const ownNumber = current.user?.id?.split(':')[0]?.split('@')[0];
+      const chatNumber = remoteJid?.split(':')[0]?.split('@')[0];
+      const isOwnChat = !!ownNumber && chatNumber === ownNumber;
+      // Permite código enviado pelo próprio celular para a conversa consigo mesmo.
+      // Mensagens enviadas pelo bot em outras conversas continuam sendo ignoradas.
+      if (!msg.message || !remoteJid?.endsWith('@s.whatsapp.net') || (msg.key.fromMe && !isOwnChat)) continue;
       const code = messageText(msg).trim().toUpperCase();
       if (!/^SS-[A-F0-9]{6}$/.test(code)) continue;
+      console.log('[StickerSom] Código de figurinha recebido na conversa:', remoteJid, 'selfChat:', isOwnChat);
       cleanExpired();
       const item = pending.get(code);
       if (!item) {
