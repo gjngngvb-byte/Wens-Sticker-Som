@@ -81,16 +81,19 @@ async function createSticker() {
     ctx=new (window.AudioContext || window.webkitAudioContext)();
     await ctx.resume();
     const destination=ctx.createMediaStreamDestination();
-    if (mode==="video") {
-      // Route the video's own audio into the export stream.
+    if (video && (mode==="video" || mode==="mix")) {
+      // In mix mode, retain the original video sound under the added audio.
       sourceAudio=ctx.createMediaElementSource(video);
-      sourceAudio.connect(destination);
-    } else {
-      const audio=new Audio(audioUrl); audio.crossOrigin="anonymous";
+      const videoGain=ctx.createGain();
+      videoGain.gain.value=mode==="mix" ? 0.65 : 1;
+      sourceAudio.connect(videoGain); videoGain.connect(destination);
+    }
+    if (mode!=="video") {
+      const audio=new Audio(); audio.preload="auto"; audio.src=audioUrl;
       await waitEvent(audio,"canplay"); audio.loop=true;
       const audioNode=ctx.createMediaElementSource(audio);
       const gain=ctx.createGain(); gain.gain.value=Number($("volume").value)/100;
-      audioNode.connect(gain); gain.connect(destination); audio.play();
+      audioNode.connect(gain); gain.connect(destination); await audio.play();
       window.__stickerSomAudio=audio;
     }
     const videoStream=canvas.captureStream(30);
