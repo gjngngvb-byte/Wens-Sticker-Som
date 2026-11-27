@@ -1,32 +1,26 @@
 # StickerSom 🎵
 
-Aplicação web para criar vídeos curtos com som a partir de imagens, GIFs ou vídeos.
+Editor web que prepara vídeos curtos em MP4 com áudio para usar no fluxo de criação de figurinhas sonoras do WhatsApp, quando esse recurso estiver liberado na conta.
 
-## Modos disponíveis
-
-1. **Imagem/GIF + áudio:** combina uma imagem ou GIF com uma faixa de áudio.
-2. **Vídeo + áudio:** usa o vídeo enviado e adiciona uma faixa de áudio externa.
+## O que faz
+1. **Imagem ou GIF + áudio:** transforma imagem/GIF em vídeo curto com uma faixa de áudio.
+2. **Vídeo + som extra:** mistura o som original do vídeo (65%) com uma faixa externa ajustável.
 3. **Vídeo com som original:** preserva o áudio do próprio vídeo.
 
+Saída MP4 H.264/AAC, 512 × 512, duração configurável de 2 a 10 segundos. A conversão ocorre no navegador com MediaRecorder e FFmpeg.wasm. Na primeira conversão, o navegador baixa os módulos FFmpeg do CDN; depois podem ficar em cache.
+
+## Como usar com o WhatsApp
+1. Gere e baixe o MP4 no StickerSom.
+2. No WhatsApp, abra uma conversa e toque em Figurinhas → Criar.
+3. Escolha o MP4 e ajuste o recorte.
+4. Se sua conta já tiver a opção de som, mantenha o áudio original ou escolha outro áudio.
+5. Crie e envie a figurinha.
+
+## Limitação importante
+O WhatsApp está liberando figurinhas com som gradualmente. O formato sonoro é novo e não há uma API pública documentada para que um site externo empacote e instale diretamente esse tipo de figurinha. A documentação pública de stickers de terceiros cobre stickers estáticos e animados, sem especificar áudio. Portanto, este site prepara o vídeo-fonte para o editor nativo, mas não promete contornar a disponibilidade da função na conta do usuário. Se a opção de som não aparecer, o MP4 ainda pode ser enviado como vídeo comum.
+
 ## Executar
-
-Não há etapa de build nem dependências. Abra `index.html` em um navegador moderno ou publique o repositório com GitHub Pages.
-
-## Como funciona
-
-O processamento acontece localmente no navegador. A prévia usa elementos de mídia HTML e a exportação usa Canvas Capture Stream, Web Audio API e MediaRecorder. O resultado atual é um arquivo **WebM com áudio**, não um pacote de figurinha nativa do WhatsApp.
-
-## Compatibilidade WhatsApp
-
-O suporte a figurinhas com áudio não é universal em todos os aparelhos/versões do WhatsApp. O projeto não promete instalação direta como sticker nativo. A exportação atual permite baixar e compartilhar o vídeo gerado. Uma integração nativa exigirá validar o formato e as APIs oficialmente suportados pelo WhatsApp no momento da implementação.
-
-## Próximos passos
-
-- Validar formato oficial de sticker com áudio e fluxo de importação, caso disponível.
-- Adicionar corte e sincronização de áudio.
-- Adicionar conversão/transcodificação para formatos adicionais.
-- Testar exportação em Safari/iOS e navegadores Android.
+Abra `index.html` em um servidor estático ou publique o repositório. Não há backend; os arquivos são processados localmente.
 
 ## Privacidade
-
-Os arquivos são processados no próprio navegador e não são enviados a um servidor nesta versão.
+A mídia não é enviada para um servidor do StickerSom. Os módulos FFmpeg são baixados do CDN jsDelivr na primeira conversão.
