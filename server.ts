@@ -6,7 +6,7 @@ import { randomBytes } from 'node:crypto';
 import makeWASocket, { DisconnectReason, useMultiFileAuthState, type WAMessage } from '@whiskeysockets/baileys';
 import QRCode from 'qrcode';
 import pino from 'pino';
-import { createAnimatedSticker, MAX_INPUT_BYTES } from './src/convert.js';
+import { createAnimatedSticker, createImageSoundSticker, createAudioTrack, MAX_INPUT_BYTES } from './src/convert.js';
 import { sendSoundSticker } from './src/sound-sticker.js';
 
 const PORT = Number(process.env.PORT || 3000);
@@ -14,6 +14,7 @@ const logger = pino({ level: process.env.LOG_LEVEL || 'silent' });
 const AUTH_DIR = process.env.AUTH_DIR || (existsSync('/var/data') ? '/var/data/stickersom-session' : './data/session');
 const MAX_AGE = 15 * 60 * 1000;
 const pending = new Map<string, { sticker: Buffer; audio: Buffer; durationMs: number; expires: number }>();
+const prepared = new Map<string, { sticker: Buffer; durationMs: number; expires: number }>();
 let socket: ReturnType<typeof makeWASocket> | undefined;
 let qrDataUrl = '';
 let connectedPhone = '';
@@ -35,6 +36,14 @@ function cleanExpired() {
   for (const [code, item] of pending) if (item.expires < now) pending.delete(code);
 }
 function makeCode() { return 'SS-' + randomBytes(3).toString('hex').toUpperCase(); }
+function makePending(sticker: Buffer, audio: Buffer, durationMs: number) {
+  cleanExpired();
+  if (pending.size >= 100) throw new Error('O serviço está cheio. Tente novamente em alguns minutos.');
+  let code = makeCode(); while (pending.has(code)) code = makeCode();
+  pending.set(code, { sticker, audio, durationMs, expires: Date.now() + MAX_AGE });
+  console.log('[StickerSom] Figurinha criada:', code, 'WhatsApp conectado:', !!connectedPhone);
+  return { ok: true, code, expiresIn: 900, phone: connectedPhone, whatsappUrl: connectedPhone ? `https://wa.me/${connectedPhone}?text=${encodeURIComponent(code)}` : null };
+}
 
 async function connect() {
   await mkdir(AUTH_DIR, { recursive: true });
@@ -128,29 +137,46 @@ const server = createServer(async (req, res) => {
     if (req.method === 'POST' && url.pathname === '/api/create') {
       const ip = req.socket.remoteAddress || 'unknown';
       const now = Date.now(), bucket = rate.get(ip);
-      if (bucket && bucket.reset > now && bucket.count >= 5) return json(res, 429, { error: 'Muitas criações. Aguarde um minuto.' });
-      if (!bucket || bucket.reset < now) rate.set(ip, { count: 1, reset: now + 60_000 }); else bucket.count++;
-      const duration = Math.min(10, Math.max(0.2, Number(url.searchParams.get('duration') || 5)));
-      const start = Math.max(0, Number(url.searchParams.get('start') || 0));
-      const chunks: Buffer[] = []; let total = 0;
-      for await (const chunk of req) {
-        const b = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-        total += b.length;
-        if (total > MAX_INPUT_BYTES) { json(res, 413, { error: 'O vídeo ultrapassa 16 MB.' }); req.destroy(); return; }
-        chunks.push(b);
+      if (bucket && bucket.reset > now && bucket.count >= 5) return json(res,429,{error:'Muitas criações. Aguarde um minuto.'});
+      if (!bucket || bucket.reset < now) rate.set(ip,{count:1,reset:now+60_000}); else bucket.count++;
+      const mode=url.searchParams.get('mode')||'video-original';
+      if(!['image-audio','video-audio','video-original'].includes(mode))return json(res,400,{error:'Modo inválido.'});
+      const duration=Math.min(10,Math.max(0.2,Number(url.searchParams.get('duration')||5)));
+      const startSec=Math.max(0,Number(url.searchParams.get('start')||0));
+      const chunks:Buffer[]=[];let total=0;
+      for await(const chunk of req){const b=Buffer.isBuffer(chunk)?chunk:Buffer.from(chunk);total+=b.length;if(total>MAX_INPUT_BYTES){json(res,413,{error:'O arquivo ultrapassa 16 MB.'});req.destroy();return;}chunks.push(b);}
+      if(!total)return json(res,400,{error:'Selecione um arquivo.'});
+      const input=Buffer.concat(chunks),type=String(req.headers['content-type']||'').toLowerCase();
+      let visual;
+      if(mode==='image-audio'){
+        if(!type.startsWith('image/'))return json(res,415,{error:'Envie uma imagem ou GIF.'});
+        visual=type.includes('gif')
+          ? await createAnimatedSticker(input,{fit:'cortar',withAudio:false,durationSec:10,meta:{packName:'StickerSom',publisher:'StickerSom'}})
+          : await createImageSoundSticker(input,{packName:'StickerSom',publisher:'StickerSom'});
+      }else{
+        if(!type.startsWith('video/'))return json(res,415,{error:'Envie um vídeo.'});
+        visual=await createAnimatedSticker(input,{fit:'cortar',withAudio:mode==='video-original',startSec,durationSec:duration,meta:{packName:'StickerSom',publisher:'StickerSom'}});
       }
-      if (!total) return json(res, 400, { error: 'Selecione um vídeo.' });
-      const result = await createAnimatedSticker(Buffer.concat(chunks), {
-        fit: 'cortar', withAudio: true, startSec: start, durationSec: duration,
-        meta: { packName: 'StickerSom', publisher: 'StickerSom' },
-      });
-      if (!result.audio || result.audioSilent) return json(res, 422, { error: result.audioSilent ? 'O trecho selecionado está sem áudio.' : 'Não consegui extrair o áudio deste vídeo.' });
+      if(mode==='video-original'){
+        if(!visual.audio||visual.audioSilent)return json(res,422,{error:visual.audioSilent?'O trecho selecionado está sem áudio.':'Esse vídeo não tem áudio. Escolha outro modo ou outro vídeo.'});
+        return json(res,200,makePending(visual.sticker,visual.audio,visual.durationMs));
+      }
       cleanExpired();
-      if (pending.size >= 100) return json(res, 503, { error: 'O serviço está cheio. Tente novamente em alguns minutos.' });
-      let code = makeCode(); while (pending.has(code)) code = makeCode();
-      pending.set(code, { sticker: result.sticker, audio: result.audio, durationMs: result.durationMs, expires: Date.now() + MAX_AGE });
-      console.log('[StickerSom] Figurinha criada:', code, 'WhatsApp conectado:', !!connectedPhone);
-      return json(res, 200, { ok: true, code, expiresIn: 900, phone: connectedPhone, whatsappUrl: connectedPhone ? `https://wa.me/${connectedPhone}?text=${encodeURIComponent(code)}` : null });
+      if(prepared.size>=100)return json(res,503,{error:'O serviço está cheio. Tente novamente em alguns minutos.'});
+      const uploadId=randomBytes(18).toString('hex');
+      prepared.set(uploadId,{sticker:visual.sticker,durationMs:visual.durationMs,expires:Date.now()+MAX_AGE});
+      return json(res,200,{ok:true,uploadId});
+    }
+    if(req.method==='POST'&&url.pathname==='/api/attach-audio'){
+      const id=url.searchParams.get('id')||'',item=prepared.get(id);
+      if(!item||item.expires<Date.now()){prepared.delete(id);return json(res,404,{error:'Preparação expirada. Crie a figurinha novamente.'});}
+      const chunks:Buffer[]=[];let total=0;
+      for await(const chunk of req){const b=Buffer.isBuffer(chunk)?chunk:Buffer.from(chunk);total+=b.length;if(total>MAX_INPUT_BYTES){json(res,413,{error:'O áudio ultrapassa 16 MB.'});req.destroy();return;}chunks.push(b);}
+      if(!total)return json(res,400,{error:'Escolha um arquivo de áudio.'});
+      const sound=await createAudioTrack(Buffer.concat(chunks),Math.min(10,item.durationMs/1000));
+      if(sound.silent)return json(res,422,{error:'O áudio está em silêncio. Escolha outro arquivo.'});
+      prepared.delete(id);
+      return json(res,200,makePending(item.sticker,sound.audio,sound.durationMs));
     }
     if (req.method === 'GET' && url.pathname === '/') {
       const html = await readFile('index.html');
