@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: stickersom
+    runtime: docker
+    plan: starter
+    region: ohio
+    branch: main
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/status
+    autoDeploy: true
+    disk:
+      name: stickersom-session
+      mountPath: /var/data
+      sizeGB: 1
