@@ -13,8 +13,36 @@ const PORT = Number(process.env.PORT || 3000);
 const logger = pino({ level: process.env.LOG_LEVEL || 'silent' });
 const AUTH_DIR = process.env.AUTH_DIR || (existsSync('/var/data') ? '/var/data/stickersom-session' : './data/session');
 const MAX_AGE = 15 * 60 * 1000;
+const SUPABASE_URL = (process.env.SUPABASE_URL || '').replace(/\\/$/, '');
+const SUPABASE_KEY = process.env.SUPABASE_ANON_KEY || '';
+const CATEGORIES = ['engracado','triste','amor','raiva','reacoes','fofo','jogos','filmes_series','musica','animais','troll','adulto','outros'];
+type StickerMeta = { name: string; creatorName: string; info: string; category: string; mediaType: 'image'|'gif'|'video' };
+async function persistSticker(sticker: Buffer, audio: Buffer, meta: StickerMeta) {
+  if (!SUPABASE_URL || !SUPABASE_KEY) throw new Error('O armazenamento permanente ainda não está configurado.');
+  const id = randomBytes(16).toString('hex');
+  const stickerPath = `${id}/sticker.webp`, audioPath = `${id}/audio.ogg`;
+  const headers = { apikey: SUPABASE_KEY, authorization: `Bearer ${SUPABASE_KEY}` };
+  const upload = async (path: string, data: Buffer, contentType: string) => {
+    const response = await fetch(`${SUPABASE_URL}/storage/v1/object/stickersom-media/${path}`, { method: 'POST', headers: { ...headers, 'content-type': contentType, 'x-upsert': 'false' }, body: new Uint8Array(data) });
+    if (!response.ok) throw new Error(`Falha ao salvar mídia (${response.status}).`);
+  };
+  await upload(stickerPath, sticker, 'image/webp');
+  try { await upload(audioPath, audio, 'audio/ogg'); } catch (error) { await fetch(`${SUPABASE_URL}/storage/v1/object/stickersom-media/${stickerPath}`, { method: 'DELETE', headers }); throw error; }
+  const record = { name: meta.name, site_name: 'StickerSom', creator_name: meta.creatorName || null, info: meta.info || null, category: meta.category, media_type: meta.mediaType, media_path: stickerPath, audio_path: audioPath };
+  const response = await fetch(`${SUPABASE_URL}/rest/v1/stickers`, { method: 'POST', headers: { ...headers, 'content-type': 'application/json', prefer: 'return=representation' }, body: JSON.stringify(record) });
+  if (!response.ok) throw new Error(`Falha ao registrar figurinha (${response.status}).`);
+  return (await response.json())[0];
+}
+async function listStickers(category = '') {
+  if (!SUPABASE_URL || !SUPABASE_KEY) throw new Error('Galeria indisponível no momento.');
+  const params = new URLSearchParams({ select: '*', order: 'created_at.desc', limit: '100' });
+  if (category && CATEGORIES.includes(category)) params.set('category', `eq.${category}`);
+  const response = await fetch(`${SUPABASE_URL}/rest/v1/stickers?${params}`, { headers: { apikey: SUPABASE_KEY, authorization: `Bearer ${SUPABASE_KEY}` } });
+  if (!response.ok) throw new Error('Não consegui carregar a galeria.');
+  return (await response.json()).map((item: any) => ({ ...item, media_url: `${SUPABASE_URL}/storage/v1/object/public/stickersom-media/${item.media_path}`, audio_url: item.audio_path ? `${SUPABASE_URL}/storage/v1/object/public/stickersom-media/${item.audio_path}` : null }));
+}
 const pending = new Map<string, { sticker: Buffer; audio: Buffer; durationMs: number; expires: number }>();
-const prepared = new Map<string, { sticker: Buffer; durationMs: number; expires: number }>();
+const prepared = new Map<string, { sticker: Buffer; durationMs: number; expires: number; meta: StickerMeta }>();
 let socket: ReturnType<typeof makeWASocket> | undefined;
 let qrDataUrl = '';
 let connectedPhone = '';
@@ -40,12 +68,13 @@ function cleanExpired() {
   for (const [code, item] of pending) if (item.expires < now) pending.delete(code);
 }
 function makeCode() { return 'SS-' + randomBytes(3).toString('hex').toUpperCase(); }
-function makePending(sticker: Buffer, audio: Buffer, durationMs: number) {
+async function makePending(sticker: Buffer, audio: Buffer, durationMs: number, meta: StickerMeta) {
   cleanExpired();
   if (pending.size >= 100) throw new Error('O serviço está cheio. Tente novamente em alguns minutos.');
   let code = makeCode(); while (pending.has(code)) code = makeCode();
+  await persistSticker(sticker, audio, meta);
   pending.set(code, { sticker, audio, durationMs, expires: Date.now() + MAX_AGE });
-  console.log('[StickerSom] Figurinha criada:', code, 'WhatsApp conectado:', !!connectedPhone);
+  console.log('[StickerSom] Figurinha criada e salva na galeria:', code, 'WhatsApp conectado:', !!connectedPhone);
   return { ok: true, code, expiresIn: 900, phone: connectedPhone, whatsappUrl: connectedPhone ? `https://wa.me/${connectedPhone}?text=${encodeURIComponent(code)}` : null };
 }
 
@@ -122,6 +151,10 @@ async function connect() {
 const server = createServer(async (req, res) => {
   try {
     const url = new URL(req.url || '/', 'http://localhost');
+    if (req.method === 'GET' && url.pathname === '/api/gallery') {
+      const category = url.searchParams.get('category') || '';
+      return json(res, 200, { ok: true, stickers: await listStickers(category) });
+    }
     if (req.method === 'GET' && url.pathname === '/api/status') {
       return json(res, 200, { ok: true, connected: !!connectedPhone, phone: connectedPhone, connectionState });
     }
@@ -235,6 +268,10 @@ if(!false) waitForConnection();
       if (bucket && bucket.reset > now && bucket.count >= 5) return json(res,429,{error:'Muitas criações. Aguarde um minuto.'});
       if (!bucket || bucket.reset < now) rate.set(ip,{count:1,reset:now+60_000}); else bucket.count++;
       const mode=url.searchParams.get('mode')||'video-original';
+      const meta: StickerMeta = { name: (url.searchParams.get('name') || '').trim().slice(0,120), creatorName: (url.searchParams.get('creator') || '').trim().slice(0,80), info: (url.searchParams.get('info') || '').trim().slice(0,500), category: url.searchParams.get('category') || '', mediaType: mode === 'image-audio' ? (String(req.headers['content-type']||'').includes('gif') ? 'gif' : 'image') : 'video' };
+      if (!meta.name) return json(res,400,{error:'Dê um nome para a figurinha.'});
+      if (!CATEGORIES.includes(meta.category)) return json(res,400,{error:'Escolha uma categoria válida.'});
+      if (meta.category === 'adulto' && url.searchParams.get('adultConfirmed') !== 'true') return json(res,403,{error:'Confirme que você tem 18 anos ou mais para publicar nesta categoria.'});
       if(!['image-audio','video-audio','video-original'].includes(mode))return json(res,400,{error:'Modo inválido.'});
       const duration=Math.min(10,Math.max(0.2,Number(url.searchParams.get('duration')||5)));
       const startSec=Math.max(0,Number(url.searchParams.get('start')||0));
@@ -254,12 +291,12 @@ if(!false) waitForConnection();
       }
       if(mode==='video-original'){
         if(!visual.audio||visual.audioSilent)return json(res,422,{error:visual.audioSilent?'O trecho selecionado está sem áudio.':'Esse vídeo não tem áudio. Escolha outro modo ou outro vídeo.'});
-        return json(res,200,makePending(visual.sticker,visual.audio,visual.durationMs));
+        return json(res,200,await makePending(visual.sticker,visual.audio,visual.durationMs,meta));
       }
       cleanExpired();
       if(prepared.size>=100)return json(res,503,{error:'O serviço está cheio. Tente novamente em alguns minutos.'});
       const uploadId=randomBytes(18).toString('hex');
-      prepared.set(uploadId,{sticker:visual.sticker,durationMs:visual.durationMs,expires:Date.now()+MAX_AGE});
+      prepared.set(uploadId,{sticker:visual.sticker,durationMs:visual.durationMs,expires:Date.now()+MAX_AGE,meta});
       return json(res,200,{ok:true,uploadId});
     }
     if(req.method==='POST'&&url.pathname==='/api/attach-audio'){
@@ -271,7 +308,7 @@ if(!false) waitForConnection();
       const sound=await createAudioTrack(Buffer.concat(chunks),Math.min(10,item.durationMs/1000));
       if(sound.silent)return json(res,422,{error:'O áudio está em silêncio. Escolha outro arquivo.'});
       prepared.delete(id);
-      return json(res,200,makePending(item.sticker,sound.audio,sound.durationMs));
+      return json(res,200,await makePending(item.sticker,sound.audio,sound.durationMs,(item as any).meta));
     }
     if (req.method === 'GET' && url.pathname === '/') {
       const html = await readFile('index.html');
