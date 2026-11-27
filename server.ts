@@ -59,7 +59,9 @@ async function connect() {
     }
   });
   current.ev.on('messages.upsert', async ({ messages, type }) => {
-    // Mensagens enviadas pelo próprio aparelho podem chegar como "append"; mensagens recebidas chegam como "notify".
+    // Registra os metadados de entrega para diagnosticar mensagens que não chegam ao fluxo.
+    console.log('[StickerSom] Evento messages.upsert:', type, messages.map(m => ({ jid: m.key.remoteJid, alt: m.key.remoteJidAlt, fromMe: m.key.fromMe, text: messageText(m).slice(0, 24) })));
+    // Mensagens enviadas pelo próprio aparelho podem chegar como append; mensagens recebidas como notify.
     if (type !== 'notify' && type !== 'append') return;
     for (const msg of messages) {
       const remoteJid = msg.key.remoteJid || '';
@@ -129,6 +131,7 @@ const server = createServer(async (req, res) => {
       if (pending.size >= 100) return json(res, 503, { error: 'O serviço está cheio. Tente novamente em alguns minutos.' });
       let code = makeCode(); while (pending.has(code)) code = makeCode();
       pending.set(code, { sticker: result.sticker, audio: result.audio, durationMs: result.durationMs, expires: Date.now() + MAX_AGE });
+      console.log('[StickerSom] Figurinha criada:', code, 'WhatsApp conectado:', !!connectedPhone);
       return json(res, 200, { ok: true, code, expiresIn: 900, phone: connectedPhone, whatsappUrl: connectedPhone ? `https://wa.me/${connectedPhone}?text=${encodeURIComponent(code)}` : null });
     }
     if (req.method === 'GET' && url.pathname === '/') {
