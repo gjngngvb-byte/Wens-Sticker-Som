@@ -124,7 +124,7 @@ async function connect() {
       const ownNumber = current.user?.id?.split(':')[0]?.split('@')[0];
       const chatNumber = remoteJid.split(':')[0].split('@')[0];
       const alternateNumber = msg.key.remoteJidAlt?.split(':')[0]?.split('@')[0];
-      const isOwnChat = !!ownNumber && (chatNumber === ownNumber || alternateNumber === ownNumber);
+      const isOwnChat = (!!ownNumber && (chatNumber === ownNumber || alternateNumber === ownNumber)) || (msg.key.fromMe === true && remoteJid.endsWith('@lid'));
       const isDirectChat = remoteJid.endsWith('@s.whatsapp.net') || remoteJid.endsWith('@lid');
       // Aceita PN e LID no chat consigo mesmo, sem processar mensagens enviadas a terceiros.
       if (!msg.message || !isDirectChat || (msg.key.fromMe && !isOwnChat)) continue;
