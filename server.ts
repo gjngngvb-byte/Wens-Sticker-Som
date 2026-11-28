@@ -326,12 +326,13 @@ const server = createServer(async (req, res) => {
       const category = url.searchParams.get('category') || '';
       const section = url.searchParams.get('section') || 'all';
       let stickers:any[] = await listStickers(category);
-      if (section === 'featured') stickers = stickers.filter((s:any) => s.is_featured);
+      if (section === 'new') stickers = stickers.slice(0,12);
+      else if (section === 'featured') stickers = stickers.filter((s:any) => s.is_featured);
       else if (section === 'trending' || section === 'spotlight') {
         const ranked:any[] = await rpc('stickersom_trending',{p_days:section==='spotlight'?14:30,p_limit:30});
         const rank = new Map(ranked.map((x:any)=>[String(x.sticker_id),Number(x.score)]));
         stickers = stickers.filter((s:any)=>rank.has(String(s.id))).sort((a:any,b:any)=>(rank.get(String(b.id))||0)-(rank.get(String(a.id))||0));
-        if(section==='spotlight') stickers=stickers.slice(0,12);
+        if(section==='spotlight') stickers=stickers.length ? stickers.slice(0,12) : (await listStickers()).slice(0,12);
       } else if (section === 'recommended') {
         const visitorId = url.searchParams.get('visitorId') || '';
         if (/^[a-zA-Z0-9_-]{12,80}$/.test(visitorId)) {
