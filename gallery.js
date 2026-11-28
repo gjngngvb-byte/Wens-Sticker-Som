@@ -1,5 +1,5 @@
 const $=id=>document.getElementById(id);
-const KEY='stickersom-selected-v1';let selected=new Set();let stickers=[];let adminMode=false;
+const KEY='stickersom-selected-v1';let selected=new Set();let stickers=[];let adminMode=false;let adultAccess=false;let previousCategory='';
 try{selected=new Set(JSON.parse(localStorage.getItem(KEY)||'[]'));}catch{}
 function save(){localStorage.setItem(KEY,JSON.stringify([...selected]));$('selectedCount').textContent=selected.size+' selecionadas';$('sendPackage').disabled=!selected.size;}
 function categoryName(value){return ({engracado:'Engraçado',triste:'Triste',amor:'Amor',raiva:'Raiva',reacoes:'Reações',fofo:'Fofo',jogos:'Jogos',filmes_series:'Filmes e séries',musica:'Música',animais:'Animais',troll:'Troll',adulto:'+18',outros:'Outros'})[value]||value;}
@@ -33,9 +33,17 @@ function openDetail(item){
 }
 async function sendOne(item,button){button.disabled=true;button.textContent='Enviando…';try{const r=await fetch('/api/send-sticker',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id:item.id})});const d=await r.json();if(!r.ok)throw Error(d.error||'Falha no envio');button.textContent='✓ Enviada no WhatsApp';}catch(e){button.disabled=false;button.textContent='Tentar enviar novamente';$('sendStatus').textContent=e.message;}}
 $('detailClose').addEventListener('click',()=>$('stickerDetail').hidden=true);$('detailBackdrop').addEventListener('click',()=>$('stickerDetail').hidden=true);
-async function load(){try{const q=$('galleryCategory').value;const r=await fetch('/api/gallery'+(q?'?category='+encodeURIComponent(q):''));const d=await r.json();if(!r.ok)throw Error(d.error);stickers=d.stickers;const list=$('galleryList');list.replaceChildren();for(const item of stickers){if(item.category==='adulto'&&!$('galleryAdultConfirm').checked)continue;list.append(cardFor(item));}if(!list.children.length)list.textContent='Nenhuma figurinha encontrada.';}catch(e){$('galleryList').textContent=e.message;}}
-$('galleryCategory').addEventListener('change',()=>{$('galleryAdultGate').hidden=$('galleryCategory').value!=='adulto';if($('galleryCategory').value!=='adulto')$('galleryAdultConfirm').checked=false;load();});
-$('galleryAdultConfirm').addEventListener('change',load);
+async function load(){try{const q=$('galleryCategory').value;const r=await fetch('/api/gallery'+(q?'?category='+encodeURIComponent(q):''));const d=await r.json();if(!r.ok)throw Error(d.error);stickers=d.stickers;const list=$('galleryList');list.replaceChildren();for(const item of stickers){if(item.is_adult&&!adultAccess)continue;list.append(cardFor(item));}if(!list.children.length)list.textContent='Nenhuma figurinha encontrada.';}catch(e){$('galleryList').textContent=e.message;}}
+$('galleryCategory').addEventListener('change',()=>{
+ const next=$('galleryCategory').value;
+ if(next==='adulto'&&!adultAccess){$('galleryCategory').value=previousCategory;$('galleryAdultConfirm').checked=false;$('adultAccessContinue').disabled=true;$('adultAccessModal').hidden=false;return;}
+ previousCategory=next;load();
+});
+$('galleryAdultConfirm').addEventListener('change',()=>{$('adultAccessContinue').disabled=!$('galleryAdultConfirm').checked;});
+function closeAdultAccess(){ $('adultAccessModal').hidden=true; $('galleryCategory').value=previousCategory; }
+$('adultAccessClose').addEventListener('click',closeAdultAccess);
+$('adultAccessBackdrop').addEventListener('click',closeAdultAccess);
+$('adultAccessContinue').addEventListener('click',()=>{if(!$('galleryAdultConfirm').checked)return;adultAccess=true;previousCategory='adulto';$('galleryCategory').value='adulto';$('adultAccessModal').hidden=true;load();});
 $('clearSelected').addEventListener('click',()=>{selected.clear();save();load();});
 $('sendPackage').addEventListener('click',async()=>{const b=$('sendPackage');b.disabled=true;$('sendStatus').textContent='Enviando pacote pelo WhatsApp…';try{const r=await fetch('/api/send-package',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({ids:[...selected]})});const d=await r.json();if(!r.ok)throw Error(d.error||'Falha no envio');$('sendStatus').textContent=d.sent+' figurinhas enviadas!';}catch(e){$('sendStatus').textContent=e.message;}finally{b.disabled=!selected.size;}});
 save();load();
