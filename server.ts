@@ -2,7 +2,7 @@ import { createServer } from 'node:http';
 import { readFile, mkdir, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { extname, join, normalize } from 'node:path';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, createHmac, timingSafeEqual } from 'node:crypto';
 import makeWASocket, { DisconnectReason, useMultiFileAuthState, type WAMessage } from '@whiskeysockets/baileys';
 import QRCode from 'qrcode';
 import pino from 'pino';
@@ -15,6 +15,10 @@ const AUTH_DIR = process.env.AUTH_DIR || (existsSync('/var/data') ? '/var/data/s
 const MAX_AGE = 15 * 60 * 1000;
 const SUPABASE_URL = (process.env.SUPABASE_URL || '').replace(/\/+$/, '');
 const SUPABASE_KEY = process.env.SUPABASE_ANON_KEY || '';
+const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+const ADMIN_PASSWORD = process.env.STICKERSOM_ADMIN_PASSWORD || '';
+const ADMIN_SESSION_SECRET = process.env.STICKERSOM_ADMIN_SESSION_SECRET || ADMIN_PASSWORD;
+const ADMIN_COOKIE = 'stickersom_admin';
 const CATEGORIES = ['engracado','triste','amor','raiva','reacoes','fofo','jogos','filmes_series','musica','animais','troll','adulto','outros'];
 type StickerMeta = { name: string; creatorName: string; info: string; category: string; mediaType: 'image'|'gif'|'video' };
 async function persistSticker(sticker: Buffer, audio: Buffer, meta: StickerMeta) {
@@ -55,6 +59,28 @@ let resettingSession = false;
 let resetInProgress = false;
 const rate = new Map<string, { count: number; reset: number }>();
 
+function adminSignature(payload: string) { return createHmac('sha256', ADMIN_SESSION_SECRET).update(payload).digest('hex'); }
+function adminCookieToken() { const payload = String(Date.now() + 12 * 60 * 60 * 1000); return payload + '.' + adminSignature(payload); }
+function isAdmin(req: import('node:http').IncomingMessage) {
+  if (!ADMIN_PASSWORD || !ADMIN_SESSION_SECRET) return false;
+  const raw = String(req.headers.cookie || '').split(';').map(v => v.trim()).find(v => v.startsWith(ADMIN_COOKIE + '='));
+  if (!raw) return false;
+  const parts = decodeURIComponent(raw.slice(ADMIN_COOKIE.length + 1)).split('.');
+  if (parts.length !== 2 || !/^\d+$/.test(parts[0]) || Number(parts[0]) < Date.now()) return false;
+  const expected = adminSignature(parts[0]);
+  return parts[1].length === expected.length && timingSafeEqual(Buffer.from(parts[1]), Buffer.from(expected));
+}
+function serviceHeaders() { if (!SUPABASE_SERVICE_KEY) throw new Error('Configure SUPABASE_SERVICE_ROLE_KEY no servidor para habilitar a administração.'); return { apikey: SUPABASE_SERVICE_KEY, authorization: 'Bearer ' + SUPABASE_SERVICE_KEY }; }
+async function permanentlyDeleteSticker(id: string) {
+  const headers = serviceHeaders();
+  const lookup = await fetch(SUPABASE_URL + '/rest/v1/stickers?select=id,media_path,audio_path&id=eq.' + encodeURIComponent(id) + '&limit=1', { headers });
+  if (!lookup.ok) throw new Error('Não consegui localizar a figurinha para apagar.');
+  const rows = await lookup.json() as Array<{id:string;media_path:string;audio_path:string|null}>;
+  if (!rows.length) throw new Error('Figurinha não encontrada.');
+  for (const path of [rows[0].media_path, rows[0].audio_path].filter(Boolean)) { const removed = await fetch(SUPABASE_URL + '/storage/v1/object/stickersom-media/' + path, { method:'DELETE', headers }); if (!removed.ok && removed.status !== 404) throw new Error('Não consegui remover os arquivos da figurinha.'); }
+  const deleted = await fetch(SUPABASE_URL + '/rest/v1/stickers?id=eq.' + encodeURIComponent(id), { method:'DELETE', headers });
+  if (!deleted.ok) throw new Error('Não consegui apagar o registro da figurinha.');
+}
 function json(res: import('node:http').ServerResponse, status: number, body: object) {
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
   res.end(JSON.stringify(body));
@@ -163,6 +189,34 @@ async function connect() {
 const server = createServer(async (req, res) => {
   try {
     const url = new URL(req.url || '/', 'http://localhost');
+    if (req.method === 'POST' && url.pathname === '/api/admin/login') {
+      if (!ADMIN_PASSWORD || !ADMIN_SESSION_SECRET) return json(res,503,{error:'Acesso administrativo ainda não configurado no servidor.'});
+      let body=''; for await (const chunk of req) body += chunk.toString(); let password=''; try { password=String(JSON.parse(body).password || ''); } catch {}
+      const a=Buffer.from(password), b=Buffer.from(ADMIN_PASSWORD); if(a.length!==b.length || !timingSafeEqual(a,b)) return json(res,401,{error:'Senha incorreta.'});
+      res.setHeader('Set-Cookie', ADMIN_COOKIE+'='+adminCookieToken()+'; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=43200'); return json(res,200,{ok:true,admin:true});
+    }
+    if (req.method === 'POST' && url.pathname === '/api/admin/logout') { res.setHeader('Set-Cookie',ADMIN_COOKIE+'=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0'); return json(res,200,{ok:true}); }
+    if (req.method === 'GET' && url.pathname === '/api/admin/status') return json(res,200,{admin:isAdmin(req)});
+    if (req.method === 'POST' && url.pathname === '/api/delete-request') {
+      let body=''; for await (const chunk of req) body += chunk.toString(); let id=''; try{id=String(JSON.parse(body).id||'');}catch{}
+      if(!/^[0-9a-f-]{36}$/i.test(id)) return json(res,400,{error:'Figurinha inválida.'});
+      const headers={apikey:SUPABASE_KEY,authorization:'Bearer '+SUPABASE_KEY,'content-type':'application/json',prefer:'return=minimal'};
+      const check=await fetch(SUPABASE_URL+'/rest/v1/stickers?select=id&id=eq.'+encodeURIComponent(id)+'&limit=1',{headers}); if(!check.ok || !(await check.json()).length) return json(res,404,{error:'Figurinha não encontrada.'});
+      const saved=await fetch(SUPABASE_URL+'/rest/v1/sticker_delete_requests',{method:'POST',headers,body:JSON.stringify({sticker_id:id})}); if(!saved.ok) throw new Error('Não consegui registrar a solicitação. Tente novamente.'); return json(res,200,{ok:true});
+    }
+    if (req.method === 'GET' && url.pathname === '/api/admin/requests') {
+      if(!isAdmin(req)) return json(res,401,{error:'Acesso restrito ao administrador.'}); const headers=serviceHeaders();
+      const r=await fetch(SUPABASE_URL+'/rest/v1/sticker_delete_requests?select=id,sticker_id,requester_note,status,created_at,stickers(name,category)&order=created_at.desc',{headers}); if(!r.ok) throw new Error('Não consegui carregar as solicitações.'); return json(res,200,{ok:true,requests:await r.json()});
+    }
+    if (req.method === 'POST' && url.pathname === '/api/admin/delete') {
+      if(!isAdmin(req)) return json(res,401,{error:'Acesso restrito ao administrador.'}); let body=''; for await (const chunk of req) body+=chunk.toString(); let id='',requestId=''; try{const b=JSON.parse(body);id=String(b.id||'');requestId=String(b.requestId||'');}catch{}
+      if(!/^[0-9a-f-]{36}$/i.test(id)) return json(res,400,{error:'Figurinha inválida.'}); await permanentlyDeleteSticker(id);
+      if(/^[0-9a-f-]{36}$/i.test(requestId)) await fetch(SUPABASE_URL+'/rest/v1/sticker_delete_requests?id=eq.'+encodeURIComponent(requestId),{method:'PATCH',headers:{...serviceHeaders(),'content-type':'application/json'},body:JSON.stringify({status:'approved',resolved_at:new Date().toISOString()})}); return json(res,200,{ok:true});
+    }
+    if (req.method === 'POST' && url.pathname === '/api/admin/reject') {
+      if(!isAdmin(req)) return json(res,401,{error:'Acesso restrito ao administrador.'}); let body=''; for await (const chunk of req) body+=chunk.toString(); let id=''; try{id=String(JSON.parse(body).id||'');}catch{}
+      if(!/^[0-9a-f-]{36}$/i.test(id)) return json(res,400,{error:'Solicitação inválida.'}); const r=await fetch(SUPABASE_URL+'/rest/v1/sticker_delete_requests?id=eq.'+encodeURIComponent(id),{method:'PATCH',headers:{...serviceHeaders(),'content-type':'application/json'},body:JSON.stringify({status:'rejected',resolved_at:new Date().toISOString()})}); if(!r.ok) throw new Error('Não consegui recusar a solicitação.'); return json(res,200,{ok:true});
+    }
     if (req.method === 'POST' && url.pathname === '/api/send-created') {
       if (!socket || !connectedPhone) return json(res,409,{error:'Conecte o WhatsApp antes de enviar.'});
       let body=''; for await(const chunk of req) body+=chunk.toString();
