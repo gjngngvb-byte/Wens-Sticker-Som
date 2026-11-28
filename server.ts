@@ -40,6 +40,7 @@ async function persistSticker(sticker: Buffer, audio: Buffer, meta: StickerMeta)
 async function listStickers(category = '') {
   if (!SUPABASE_URL || !SUPABASE_KEY) throw new Error('Galeria indisponível no momento.');
   const params = new URLSearchParams({ select: '*', order: 'created_at.desc', limit: '100' });
+  params.set('status', 'eq.active');
   if (category && CATEGORIES.includes(category)) params.set('category', `eq.${category}`);
   const response = await fetch(`${SUPABASE_URL}/rest/v1/stickers?${params}`, { headers: { apikey: SUPABASE_KEY, authorization: `Bearer ${SUPABASE_KEY}` } });
   if (!response.ok) throw new Error('Não consegui carregar a galeria.');
@@ -166,7 +167,7 @@ async function connect() {
         } else {
           const suffix = code.slice(3).toLowerCase();
           const headers = { apikey: SUPABASE_KEY, authorization: `Bearer ${SUPABASE_KEY}` };
-          const lookup = await fetch(`${SUPABASE_URL}/rest/v1/stickers?select=media_path,audio_path&id=like.*${suffix}&limit=2`, { headers });
+          const lookup = await fetch(`${SUPABASE_URL}/rest/v1/stickers?select=media_path,audio_path&id=like.*${suffix}&status=eq.active&limit=2`, { headers });
           const rows = lookup.ok ? await lookup.json() as Array<{media_path:string;audio_path:string}> : [];
           if (rows.length !== 1) throw new Error(rows.length ? 'Código duplicado. Gere outra figurinha.' : 'Código não encontrado.');
           const row = rows[0];
@@ -202,7 +203,10 @@ const server = createServer(async (req, res) => {
       if(!/^[0-9a-f-]{36}$/i.test(id)) return json(res,400,{error:'Figurinha inválida.'});
       const headers={apikey:SUPABASE_KEY,authorization:'Bearer '+SUPABASE_KEY,'content-type':'application/json',prefer:'return=minimal'};
       const check=await fetch(SUPABASE_URL+'/rest/v1/stickers?select=id&id=eq.'+encodeURIComponent(id)+'&limit=1',{headers}); if(!check.ok || !(await check.json()).length) return json(res,404,{error:'Figurinha não encontrada.'});
-      const saved=await fetch(SUPABASE_URL+'/rest/v1/sticker_delete_requests',{method:'POST',headers,body:JSON.stringify({sticker_id:id})}); if(!saved.ok) throw new Error('Não consegui registrar a solicitação. Tente novamente.'); return json(res,200,{ok:true});
+      const saved=await fetch(SUPABASE_URL+'/rest/v1/sticker_delete_requests',{method:'POST',headers,body:JSON.stringify({sticker_id:id})}); if(!saved.ok) throw new Error('Não consegui registrar a solicitação. Tente novamente.');
+      const quarantine=await fetch(SUPABASE_URL+'/rest/v1/stickers?id=eq.'+encodeURIComponent(id),{method:'PATCH',headers:{...serviceHeaders(),'content-type':'application/json','prefer':'return=minimal'},body:JSON.stringify({status:'quarantined'})});
+      if(!quarantine.ok) throw new Error('O pedido foi registrado, mas não consegui colocar a figurinha em quarentena.');
+      return json(res,200,{ok:true});
     }
     if (req.method === 'GET' && url.pathname === '/api/admin/requests') {
       if(!isAdmin(req)) return json(res,401,{error:'Acesso restrito ao administrador.'}); const headers=serviceHeaders();
@@ -212,6 +216,14 @@ const server = createServer(async (req, res) => {
       if(!isAdmin(req)) return json(res,401,{error:'Acesso restrito ao administrador.'}); let body=''; for await (const chunk of req) body+=chunk.toString(); let id='',requestId=''; try{const b=JSON.parse(body);id=String(b.id||'');requestId=String(b.requestId||'');}catch{}
       if(!/^[0-9a-f-]{36}$/i.test(id)) return json(res,400,{error:'Figurinha inválida.'}); await permanentlyDeleteSticker(id);
       if(/^[0-9a-f-]{36}$/i.test(requestId)) await fetch(SUPABASE_URL+'/rest/v1/sticker_delete_requests?id=eq.'+encodeURIComponent(requestId),{method:'PATCH',headers:{...serviceHeaders(),'content-type':'application/json'},body:JSON.stringify({status:'approved',resolved_at:new Date().toISOString()})}); return json(res,200,{ok:true});
+    }
+    if (req.method === 'POST' && url.pathname === '/api/admin/restore') {
+      if(!isAdmin(req)) return json(res,401,{error:'Acesso restrito ao administrador.'}); let body=''; for await(const chunk of req) body+=chunk.toString(); let id='',requestId=''; try{const b=JSON.parse(body);id=String(b.id||'');requestId=String(b.requestId||'');}catch{}
+      if(!/^[0-9a-f-]{36}$/i.test(id)) return json(res,400,{error:'Figurinha inválida.'});
+      const restored=await fetch(SUPABASE_URL+'/rest/v1/stickers?id=eq.'+encodeURIComponent(id),{method:'PATCH',headers:{...serviceHeaders(),'content-type':'application/json','prefer':'return=representation'},body:JSON.stringify({status:'active'})});
+      if(!restored.ok) throw new Error('Não consegui restaurar a figurinha.'); const rows=await restored.json(); if(!rows.length) return json(res,404,{error:'Figurinha não encontrada.'});
+      if(/^[0-9a-f-]{36}$/i.test(requestId)) await fetch(SUPABASE_URL+'/rest/v1/sticker_delete_requests?id=eq.'+encodeURIComponent(requestId),{method:'PATCH',headers:{...serviceHeaders(),'content-type':'application/json'},body:JSON.stringify({status:'rejected',resolved_at:new Date().toISOString()})});
+      return json(res,200,{ok:true});
     }
     if (req.method === 'POST' && url.pathname === '/api/admin/reject') {
       if(!isAdmin(req)) return json(res,401,{error:'Acesso restrito ao administrador.'}); let body=''; for await (const chunk of req) body+=chunk.toString(); let id=''; try{id=String(JSON.parse(body).id||'');}catch{}
@@ -233,7 +245,7 @@ const server = createServer(async (req, res) => {
       let id=''; try{id=String(JSON.parse(body).id||'');}catch{}
       if(!/^[0-9a-f-]{36}$/i.test(id))return json(res,400,{error:'Figurinha inválida.'});
       const headers={apikey:SUPABASE_KEY,authorization:`Bearer ${SUPABASE_KEY}`};
-      const lookup=await fetch(`${SUPABASE_URL}/rest/v1/stickers?select=media_path,audio_path&id=eq.${encodeURIComponent(id)}&limit=1`,{headers});
+      const lookup=await fetch(`${SUPABASE_URL}/rest/v1/stickers?select=media_path,audio_path&id=eq.${encodeURIComponent(id)}&status=eq.active&limit=1`,{headers});
       if(!lookup.ok)throw new Error('Não consegui localizar a figurinha.');
       const rows=await lookup.json() as Array<{media_path:string;audio_path:string}>;
       if(!rows.length)return json(res,404,{error:'Figurinha não encontrada.'});
