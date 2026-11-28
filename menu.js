@@ -3,5 +3,5 @@ const adminLogin=document.getElementById('adminLogin'),adminLink=document.getEle
 async function refreshAdmin(){try{const r=await fetch('/api/admin/status',{cache:'no-store'});const d=await r.json();const yes=!!d.admin;if(adminLink)adminLink.hidden=!yes;if(adminLogout)adminLogout.hidden=!yes;if(adminLogin)adminLogin.hidden=yes;const panel=document.getElementById('adminRequests');if(panel)panel.hidden=!yes;if(yes&&window.refreshAdminMode)window.refreshAdminMode();}catch{}}
 adminLogin?.addEventListener('click',async()=>{const password=prompt('Senha do administrador:');if(password===null)return;try{const r=await fetch('/api/admin/login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({password})});const d=await r.json();if(!r.ok)throw Error(d.error||'Não foi possível entrar.');closeMenu();await refreshAdmin();}catch(e){alert(e.message);}});
 adminLogout?.addEventListener('click',async()=>{await fetch('/api/admin/logout',{method:'POST'});await refreshAdmin();closeMenu();});
-adminLink?.addEventListener('click',()=>{closeMenu();const panel=document.getElementById('adminRequests');if(panel){panel.hidden=false;panel.scrollIntoView({behavior:'smooth'});}});
+adminLink?.addEventListener('click',()=>{closeMenu();});
 refreshAdmin();
