@@ -20,7 +20,7 @@ const ADMIN_PASSWORD = process.env.STICKERSOM_ADMIN_PASSWORD || '';
 const ADMIN_SESSION_SECRET = process.env.STICKERSOM_ADMIN_SESSION_SECRET || ADMIN_PASSWORD;
 const ADMIN_COOKIE = 'stickersom_admin';
 const CATEGORIES = ['engracado','triste','amor','raiva','reacoes','fofo','jogos','filmes_series','musica','animais','troll','adulto','outros'];
-type StickerMeta = { name: string; creatorName: string; info: string; category: string; mediaType: 'image'|'gif'|'video' };
+type StickerMeta = { name: string; creatorName: string; info: string; category: string; isAdult: boolean; mediaType: 'image'|'gif'|'video' };
 async function persistSticker(sticker: Buffer, audio: Buffer, meta: StickerMeta) {
   if (!SUPABASE_URL || !SUPABASE_KEY) throw new Error('O armazenamento permanente ainda não está configurado.');
   const id = randomBytes(16).toString('hex');
@@ -32,7 +32,7 @@ async function persistSticker(sticker: Buffer, audio: Buffer, meta: StickerMeta)
   };
   await upload(stickerPath, sticker, 'image/webp');
   try { await upload(audioPath, audio, 'audio/ogg'); } catch (error) { await fetch(`${SUPABASE_URL}/storage/v1/object/stickersom-media/${stickerPath}`, { method: 'DELETE', headers }); throw error; }
-  const record = { name: meta.name, site_name: 'StickerSom', creator_name: meta.creatorName || null, info: meta.info || null, category: meta.category, media_type: meta.mediaType, media_path: stickerPath, audio_path: audioPath };
+  const record = { name: meta.name, site_name: 'StickerSom', creator_name: meta.creatorName || null, info: meta.info || null, category: meta.category, is_adult: meta.isAdult, media_type: meta.mediaType, media_path: stickerPath, audio_path: audioPath };
   const response = await fetch(`${SUPABASE_URL}/rest/v1/stickers`, { method: 'POST', headers: { ...headers, 'content-type': 'application/json', prefer: 'return=representation' }, body: JSON.stringify(record) });
   if (!response.ok) throw new Error(`Falha ao registrar figurinha (${response.status}).`);
   return (await response.json())[0];
@@ -41,7 +41,7 @@ async function listStickers(category = '') {
   if (!SUPABASE_URL || !SUPABASE_KEY) throw new Error('Galeria indisponível no momento.');
   const params = new URLSearchParams({ select: '*', order: 'created_at.desc', limit: '100' });
   params.set('status', 'eq.active');
-  if (category && CATEGORIES.includes(category)) params.set('category', `eq.${category}`);
+  if (category === 'adulto') params.set('is_adult', 'eq.true'); else if (category && CATEGORIES.includes(category)) params.set('category', `eq.${category}`);
   const response = await fetch(`${SUPABASE_URL}/rest/v1/stickers?${params}`, { headers: { apikey: SUPABASE_KEY, authorization: `Bearer ${SUPABASE_KEY}` } });
   if (!response.ok) throw new Error('Não consegui carregar a galeria.');
   return (await response.json()).map((item: any) => ({ ...item, media_url: `${SUPABASE_URL}/storage/v1/object/public/stickersom-media/${item.media_path}`, audio_url: item.audio_path ? `${SUPABASE_URL}/storage/v1/object/public/stickersom-media/${item.audio_path}` : null }));
@@ -392,10 +392,9 @@ if(!false) waitForConnection();
       if (bucket && bucket.reset > now && bucket.count >= 5) return json(res,429,{error:'Muitas criações. Aguarde um minuto.'});
       if (!bucket || bucket.reset < now) rate.set(ip,{count:1,reset:now+60_000}); else bucket.count++;
       const mode=url.searchParams.get('mode')||'video-original';
-      const meta: StickerMeta = { name: (url.searchParams.get('name') || '').trim().slice(0,120), creatorName: (url.searchParams.get('creator') || '').trim().slice(0,80), info: (url.searchParams.get('info') || '').trim().slice(0,500), category: url.searchParams.get('category') || '', mediaType: mode === 'image-audio' ? (String(req.headers['content-type']||'').includes('gif') ? 'gif' : 'image') : 'video' };
+      const meta: StickerMeta = { name: (url.searchParams.get('name') || '').trim().slice(0,120), creatorName: (url.searchParams.get('creator') || '').trim().slice(0,80), info: (url.searchParams.get('info') || '').trim().slice(0,500), category: url.searchParams.get('category') || '', isAdult: url.searchParams.get('isAdult') === 'true', mediaType: mode === 'image-audio' ? (String(req.headers['content-type']||'').includes('gif') ? 'gif' : 'image') : 'video' };
       if (!meta.name) return json(res,400,{error:'Dê um nome para a figurinha.'});
       if (!CATEGORIES.includes(meta.category)) return json(res,400,{error:'Escolha uma categoria válida.'});
-      if (meta.category === 'adulto' && url.searchParams.get('adultConfirmed') !== 'true') return json(res,403,{error:'Confirme que você tem 18 anos ou mais para publicar nesta categoria.'});
       if(!['image-audio','video-audio','video-original'].includes(mode))return json(res,400,{error:'Modo inválido.'});
       const duration=Math.min(10,Math.max(0.2,Number(url.searchParams.get('duration')||5)));
       const startSec=Math.max(0,Number(url.searchParams.get('start')||0));
