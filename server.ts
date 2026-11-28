@@ -16,11 +16,34 @@ const MAX_AGE = 15 * 60 * 1000;
 const SUPABASE_URL = (process.env.SUPABASE_URL || '').replace(/\/+$/, '');
 const SUPABASE_KEY = process.env.SUPABASE_ANON_KEY || '';
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
 const ADMIN_PASSWORD = process.env.STICKERSOM_ADMIN_PASSWORD || '';
 const ADMIN_SESSION_SECRET = process.env.STICKERSOM_ADMIN_SESSION_SECRET || ADMIN_PASSWORD;
 const ADMIN_COOKIE = 'stickersom_admin';
 const CATEGORIES = ['engracado','triste','amor','raiva','reacoes','fofo','jogos','filmes_series','musica','animais','troll','adulto','outros'];
 type StickerMeta = { name: string; creatorName: string; info: string; category: string; isAdult: boolean; mediaType: 'image'|'gif'|'video' };
+async function createEmbedding(meta: StickerMeta) {
+  if (!OPENAI_API_KEY) return null;
+  const input = [meta.name, meta.category, meta.info, meta.creatorName].filter(Boolean).join('. ').slice(0, 2000);
+  const response = await fetch('https://api.openai.com/v1/embeddings', { method: 'POST', headers: { authorization: 'Bearer ' + OPENAI_API_KEY, 'content-type': 'application/json' }, body: JSON.stringify({ model: 'text-embedding-3-small', input }) });
+  if (!response.ok) throw new Error('Falha ao gerar embedding da figurinha.');
+  const data = await response.json() as { data?: Array<{ embedding?: number[] }> };
+  return data.data?.[0]?.embedding || null;
+}
+async function saveStickerEmbedding(id: string, meta: StickerMeta) {
+  if (!OPENAI_API_KEY) return;
+  try {
+    const embedding = await createEmbedding(meta);
+    if (!embedding) return;
+    const headers = { ...serviceHeaders(), 'content-type': 'application/json', prefer: 'return=minimal' };
+    await fetch(`${SUPABASE_URL}/rest/v1/stickers?id=eq.${encodeURIComponent(id)}`, { method: 'PATCH', headers, body: JSON.stringify({ embedding: `[${embedding.join(',')}]` }) });
+  } catch (error) { console.error('[StickerSom] Embedding não salvo:', error); }
+}
+async function rpc(name: string, body: Record<string, unknown>) {
+  const response = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${name}`, { method: 'POST', headers: { ...serviceHeaders(), 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  if (!response.ok) throw new Error('Não consegui consultar os dados de descoberta.');
+  return response.json();
+}
 async function persistSticker(sticker: Buffer, audio: Buffer, meta: StickerMeta) {
   if (!SUPABASE_URL || !SUPABASE_KEY) throw new Error('O armazenamento permanente ainda não está configurado.');
   const id = randomBytes(16).toString('hex');
@@ -35,7 +58,9 @@ async function persistSticker(sticker: Buffer, audio: Buffer, meta: StickerMeta)
   const record = { name: meta.name, site_name: 'StickerSom', creator_name: meta.creatorName || null, info: meta.info || null, category: meta.category, is_adult: meta.isAdult, media_type: meta.mediaType, media_path: stickerPath, audio_path: audioPath };
   const response = await fetch(`${SUPABASE_URL}/rest/v1/stickers`, { method: 'POST', headers: { ...headers, 'content-type': 'application/json', prefer: 'return=representation' }, body: JSON.stringify(record) });
   if (!response.ok) throw new Error(`Falha ao registrar figurinha (${response.status}).`);
-  return (await response.json())[0];
+  const saved = (await response.json())[0];
+  await saveStickerEmbedding(saved.id, meta);
+  return saved;
 }
 async function listStickers(category = '') {
   if (!SUPABASE_URL || !SUPABASE_KEY) throw new Error('Galeria indisponível no momento.');
@@ -208,6 +233,28 @@ const server = createServer(async (req, res) => {
       if(!quarantine.ok) throw new Error('O pedido foi registrado, mas não consegui colocar a figurinha em quarentena.');
       return json(res,200,{ok:true});
     }
+    if (req.method === 'GET' && url.pathname === '/api/admin/stats') {
+      if (!isAdmin(req)) return json(res,401,{error:'Acesso restrito ao administrador.'});
+      return json(res,200,{ok:true,stats:await rpc('stickersom_admin_stats',{})});
+    }
+    if (req.method === 'POST' && url.pathname === '/api/admin/feature') {
+      if (!isAdmin(req)) return json(res,401,{error:'Acesso restrito ao administrador.'});
+      let body=''; for await (const chunk of req) body+=chunk.toString(); let id='',featured=false;
+      try { const b=JSON.parse(body); id=String(b.id||''); featured=!!b.featured; } catch {}
+      if (!/^[0-9a-f-]{36}$/i.test(id)) return json(res,400,{error:'Figurinha inválida.'});
+      const result=await fetch(SUPABASE_URL+'/rest/v1/stickers?id=eq.'+encodeURIComponent(id),{method:'PATCH',headers:{...serviceHeaders(),'content-type':'application/json','prefer':'return=representation'},body:JSON.stringify({is_featured:featured})});
+      if(!result.ok) throw new Error('Não consegui atualizar a vitrine ADM.');
+      return json(res,200,{ok:true,featured});
+    }
+    if (req.method === 'POST' && url.pathname === '/api/events') {
+      let body=''; for await (const chunk of req) body+=chunk.toString();
+      let stickerId='',visitorId='',eventType='';
+      try { const b=JSON.parse(body); stickerId=String(b.stickerId||''); visitorId=String(b.visitorId||''); eventType=String(b.eventType||''); } catch {}
+      if(!/^[0-9a-f-]{36}$/i.test(stickerId) || !/^[a-zA-Z0-9_-]{12,80}$/.test(visitorId) || !['view','select','send','favorite'].includes(eventType)) return json(res,400,{error:'Evento inválido.'});
+      const saved=await fetch(SUPABASE_URL+'/rest/v1/sticker_events',{method:'POST',headers:{...serviceHeaders(),'content-type':'application/json','prefer':'return=minimal'},body:JSON.stringify({sticker_id:stickerId,visitor_id:visitorId,event_type:eventType})});
+      if(!saved.ok) throw new Error('Não consegui registrar a interação.');
+      return json(res,200,{ok:true});
+    }
     if (req.method === 'GET' && url.pathname === '/api/admin/requests') {
       if(!isAdmin(req)) return json(res,401,{error:'Acesso restrito ao administrador.'}); const headers=serviceHeaders();
       const r=await fetch(SUPABASE_URL+'/rest/v1/sticker_delete_requests?select=id,sticker_id,requester_note,status,created_at,stickers(name,category)&order=created_at.desc',{headers}); if(!r.ok) throw new Error('Não consegui carregar as solicitações.'); return json(res,200,{ok:true,requests:await r.json()});
@@ -277,7 +324,36 @@ const server = createServer(async (req, res) => {
     }
     if (req.method === 'GET' && url.pathname === '/api/gallery') {
       const category = url.searchParams.get('category') || '';
-      return json(res, 200, { ok: true, stickers: await listStickers(category) });
+      const section = url.searchParams.get('section') || 'all';
+      let stickers:any[] = await listStickers(category);
+      if (section === 'featured') stickers = stickers.filter((s:any) => s.is_featured);
+      else if (section === 'trending' || section === 'spotlight') {
+        const ranked:any[] = await rpc('stickersom_trending',{p_days:section==='spotlight'?14:30,p_limit:30});
+        const rank = new Map(ranked.map((x:any)=>[String(x.sticker_id),Number(x.score)]));
+        stickers = stickers.filter((s:any)=>rank.has(String(s.id))).sort((a:any,b:any)=>(rank.get(String(b.id))||0)-(rank.get(String(a.id))||0));
+        if(section==='spotlight') stickers=stickers.slice(0,12);
+      } else if (section === 'recommended') {
+        const visitorId = url.searchParams.get('visitorId') || '';
+        if (/^[a-zA-Z0-9_-]{12,80}$/.test(visitorId)) {
+          const ranked:any[] = await rpc('stickersom_recommended',{p_visitor_id:visitorId,p_limit:30});
+          const rank = new Map(ranked.map((x:any)=>[String(x.sticker_id),Number(x.score)]));
+          stickers = stickers.filter((s:any)=>rank.has(String(s.id))).sort((a:any,b:any)=>(rank.get(String(b.id))||0)-(rank.get(String(a.id))||0));
+        } else stickers=[];
+      } else if (section === 'similar') {
+        const sourceId = url.searchParams.get('stickerId') || '';
+        const all = await listStickers();
+        const source:any = all.find((s:any)=>String(s.id)===sourceId);
+        if (!source) stickers=[];
+        else if (source.embedding) {
+          const ranked:any[] = await rpc('stickersom_similar',{p_embedding:source.embedding,p_exclude:source.id,p_limit:12});
+          const ids=ranked.map((x:any)=>String(x.sticker_id));
+          stickers=ids.map(id=>all.find((s:any)=>String(s.id)===id)).filter(Boolean);
+        } else {
+          const words=new Set(String(source.name+' '+(source.info||'')).toLowerCase().split(/[^a-z0-9áéíóúãõç]+/).filter((x:string)=>x.length>3));
+          stickers=all.filter((s:any)=>s.id!==source.id).map((s:any)=>({s,score:(s.category===source.category?4:0)+String(s.name+' '+(s.info||'')).toLowerCase().split(/[^a-z0-9áéíóúãõç]+/).filter((x:string)=>words.has(x)&&x.length>3).length})).filter((x:any)=>x.score>0).sort((a:any,b:any)=>b.score-a.score).map((x:any)=>x.s).slice(0,12);
+        }
+      }
+      return json(res, 200, { ok: true, stickers });
     }
     if (req.method === 'GET' && url.pathname === '/api/status') {
       return json(res, 200, { ok: true, connected: !!connectedPhone, phone: connectedPhone, connectionState });
@@ -286,8 +362,9 @@ const server = createServer(async (req, res) => {
       return json(res, 200, { ok: true, qr: qrDataUrl, connected: !!connectedPhone });
     }
     if (req.method === 'GET' && url.pathname === '/pair') {
+      if (!isAdmin(req)) { res.writeHead(302,{location:'/gallery'}); return res.end(); }
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-      return res.end(`<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><title>Conectar WhatsApp | StickerSom</title><body style="margin:0;background:var(--bg);color:var(--ink);font:16px system-ui"><link rel="stylesheet" href="/styles.css"><header class="top"><div class="top-left"><button class="menu-trigger" id="menuOpen" aria-label="Abrir menu">☰</button><div class="drawer-backdrop" id="drawerBackdrop" hidden></div><aside class="side-drawer" id="sideDrawer" aria-label="Menu principal" aria-hidden="true"><div class="drawer-head"><b>StickerSom</b><button id="menuClose" aria-label="Fechar menu">×</button></div><a href="/gallery">▦ Galeria</a><a href="/">✦ Criar figurinhas</a><a href="/gallery#selected">✓ Selecionados</a><a href="/pair">⌁ Conectar WhatsApp</a><details class="drawer-tools"><summary>🧰 Ferramentas</summary><div class="drawer-tool-links"><a href="https://noadsdl.com/" target="_blank" rel="noopener noreferrer">▶ Baixar vídeos do YouTube ↗</a><a href="https://www.myinstants.com/pt/index/br/" target="_blank" rel="noopener noreferrer">♫ Baixar efeitos sonoros ↗</a><a href="https://snapinsta.com.br/" target="_blank" rel="noopener noreferrer">◎ Baixar conteúdo do Instagram ↗</a><a href="https://snaptik.fi/pt" target="_blank" rel="noopener noreferrer">♪ Baixar vídeos do TikTok ↗</a><a href="https://giphy.com/explore/imagens" target="_blank" rel="noopener noreferrer">▧ Baixar GIFs ↗</a></div></details><div class="drawer-admin-area"><button id="adminLogin" class="drawer-admin">♙ Administrador</button><a href="/gallery#adminRequests" id="adminRequestsLink" hidden>▤ Solicitações de exclusão</a><button id="adminLogout" class="drawer-admin" hidden>Sair da administração</button></div></aside></div><a class="brand" href="/"><span class="brand-mark">♪</span><span>sticker<strong>som</strong></span></a><a class="online connect-button" href="/pair">⌁ Conectar WhatsApp</a></header><main style="max-width:420px;width:100%"><h2>Conectar WhatsApp StickerSom</h2><p id="state">${connectedPhone ? 'WhatsApp já conectado: +' + connectedPhone : 'Escolha uma forma de conexão'}</p><section style="background:#201e29;padding:18px;border-radius:16px;margin:18px 0"><h3>Por código</h3><p>Digite o número que será conectado, com código do país. Ex.: 5511999999999</p><input id="phone" inputmode="numeric" autocomplete="tel" placeholder="5511999999999" style="box-sizing:border-box;width:100%;padding:14px;border-radius:9px;border:0;font-size:17px"><button id="request" style="margin-top:12px;width:100%;padding:14px;border:0;border-radius:9px;background:#9c6bff;color:white;font-weight:700;font-size:16px">Gerar código de pareamento</button><h1 id="paircode" style="letter-spacing:5px"></h1><p id="message" aria-live="polite">No WhatsApp: Aparelhos conectados → Conectar aparelho → Conectar com número de telefone</p></section><section style="background:#201e29;padding:18px;border-radius:16px"><h3>Ou use QR Code</h3><img id="qrImage" width="280" style="max-width:100%;display:none" alt="QR Code para conectar WhatsApp"><p id="qrHint">Aguardando QR Code…</p><p>WhatsApp → Aparelhos conectados → Conectar aparelho</p></section><section style="background:#201e29;padding:18px;border-radius:16px;margin-top:18px"><h3>Problemas de conexão?</h3><p>Limpe a sessão salva e conecte o WhatsApp novamente.</p><button id="resetSession" style="width:100%;padding:14px;border:0;border-radius:9px;background:#a33b3b;color:white;font-weight:700;font-size:15px">Desconectar e limpar sessão</button><p id="resetMessage" aria-live="polite"></p></section><script>document.getElementById('phone').addEventListener('input',e=>{const el=e.target;const digits=el.value.replace(/[^0-9]/g,'');if(el.value!==digits)el.value=digits;});
+      return res.end(`<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><title>Conectar WhatsApp | StickerSom</title><body style="margin:0;background:var(--bg);color:var(--ink);font:16px system-ui"><link rel="stylesheet" href="/styles.css"><header class="top"><div class="top-left"><button class="menu-trigger" id="menuOpen" aria-label="Abrir menu">☰</button><div class="drawer-backdrop" id="drawerBackdrop" hidden></div><aside class="side-drawer" id="sideDrawer" aria-label="Menu principal" aria-hidden="true"><div class="drawer-head"><b>StickerSom</b><button id="menuClose" aria-label="Fechar menu">×</button></div><a href="/gallery">▦ Galeria</a><a href="/">✦ Criar figurinhas</a><a href="/gallery#selected">✓ Selecionados</a><a href="/pair" id="adminConnectLink" hidden>⌁ Conectar WhatsApp</a><details class="drawer-tools"><summary>🧰 Ferramentas</summary><div class="drawer-tool-links"><a href="https://noadsdl.com/" target="_blank" rel="noopener noreferrer">▶ Baixar vídeos do YouTube ↗</a><a href="https://www.myinstants.com/pt/index/br/" target="_blank" rel="noopener noreferrer">♫ Baixar efeitos sonoros ↗</a><a href="https://snapinsta.com.br/" target="_blank" rel="noopener noreferrer">◎ Baixar conteúdo do Instagram ↗</a><a href="https://snaptik.fi/pt" target="_blank" rel="noopener noreferrer">♪ Baixar vídeos do TikTok ↗</a><a href="https://giphy.com/explore/imagens" target="_blank" rel="noopener noreferrer">▧ Baixar GIFs ↗</a></div></details><div class="drawer-admin-area"><button id="adminLogin" class="drawer-admin">♙ Administrador</button><a href="/gallery#adminRequests" id="adminRequestsLink" hidden>▤ Solicitações de exclusão</a><button id="adminLogout" class="drawer-admin" hidden>Sair da administração</button></div></aside></div><a class="brand" href="/"><span class="brand-mark">♪</span><span>sticker<strong>som</strong></span></a><a class="online connect-button" id="connection" href="/pair" hidden>⌁ Conectar WhatsApp</a></header><main style="max-width:420px;width:100%"><h2>Conectar WhatsApp StickerSom</h2><p id="state">${connectedPhone ? 'WhatsApp já conectado: +' + connectedPhone : 'Escolha uma forma de conexão'}</p><section style="background:#201e29;padding:18px;border-radius:16px;margin:18px 0"><h3>Por código</h3><p>Digite o número que será conectado, com código do país. Ex.: 5511999999999</p><input id="phone" inputmode="numeric" autocomplete="tel" placeholder="5511999999999" style="box-sizing:border-box;width:100%;padding:14px;border-radius:9px;border:0;font-size:17px"><button id="request" style="margin-top:12px;width:100%;padding:14px;border:0;border-radius:9px;background:#9c6bff;color:white;font-weight:700;font-size:16px">Gerar código de pareamento</button><h1 id="paircode" style="letter-spacing:5px"></h1><p id="message" aria-live="polite">No WhatsApp: Aparelhos conectados → Conectar aparelho → Conectar com número de telefone</p></section><section style="background:#201e29;padding:18px;border-radius:16px"><h3>Ou use QR Code</h3><img id="qrImage" width="280" style="max-width:100%;display:none" alt="QR Code para conectar WhatsApp"><p id="qrHint">Aguardando QR Code…</p><p>WhatsApp → Aparelhos conectados → Conectar aparelho</p></section><section style="background:#201e29;padding:18px;border-radius:16px;margin-top:18px"><h3>Problemas de conexão?</h3><p>Limpe a sessão salva e conecte o WhatsApp novamente.</p><button id="resetSession" style="width:100%;padding:14px;border:0;border-radius:9px;background:#a33b3b;color:white;font-weight:700;font-size:15px">Desconectar e limpar sessão</button><p id="resetMessage" aria-live="polite"></p></section><script>document.getElementById('phone').addEventListener('input',e=>{const el=e.target;const digits=el.value.replace(/[^0-9]/g,'');if(el.value!==digits)el.value=digits;});
 document.getElementById('request').onclick=async()=>{const phone=document.getElementById('phone').value.replace(/[^0-9]/g,'');const msg=document.getElementById('message');const btn=document.getElementById('request');document.getElementById('paircode').textContent='';msg.textContent='Solicitando código…';btn.disabled=true;try{const r=await fetch('/api/pairing-code',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({phone})});const d=await r.json();if(!r.ok)throw new Error(d.error||'Não foi possível gerar o código.');document.getElementById('paircode').textContent=d.code;msg.textContent='No celular, abra Aparelhos conectados → Conectar aparelho → Conectar com número de telefone e digite este código.'}catch(e){msg.textContent=e.message}finally{btn.disabled=false}};</script><script>
 const state=document.getElementById('state');
 const qrImage=document.getElementById('qrImage');
@@ -323,6 +400,7 @@ if(!false) waitForConnection();
 </script><script src="/menu.js"></script></main></body>`);
     }
     if (req.method === 'POST' && url.pathname === '/api/reset-session') {
+      if (!isAdmin(req)) return json(res,401,{error:'Acesso restrito ao administrador.'});
       if (resetInProgress) return json(res, 409, { error: 'A limpeza da sessão já está em andamento.' });
       resetInProgress = true;
       resettingSession = true;
@@ -360,6 +438,7 @@ if(!false) waitForConnection();
       }
     }
     if (req.method === 'POST' && url.pathname === '/api/pairing-code') {
+      if (!isAdmin(req)) return json(res,401,{error:'Acesso restrito ao administrador.'});
       if (connectedPhone || pairingRegistered) return json(res, 409, { error: 'O WhatsApp já está conectado. Limpe a sessão antes de gerar um novo pareamento.' });
       let body = '';
       for await (const chunk of req) body += chunk.toString();
