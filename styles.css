@@ -8,3 +8,6 @@
 .drawer-admin{padding:13px 12px;border:0;border-radius:11px;text-align:left;background:#f0f1ec;color:var(--ink);font:700 14px system-ui;cursor:pointer}.admin-panel{margin:24px 0;padding:18px;border:1px solid var(--line);border-radius:16px;background:#fff}.admin-panel[hidden]{display:none}.admin-panel .gallery-card{margin-bottom:10px}.admin-panel .primary,.admin-panel .secondary{width:auto;min-height:38px;margin:0;padding:9px 12px}
 
 .adult-flag{display:flex!important;align-items:center;gap:9px;padding:12px;border:1px solid var(--line);border-radius:10px;background:#f8f8f4;font-size:12px!important;font-weight:750!important;color:var(--ink)!important}.adult-flag input{width:17px;height:17px;accent-color:var(--green)}
+
+/* Menu lateral compartilhado em todas as telas */
+.drawer-section-title{padding:16px 12px 5px;margin-top:5px;border-top:1px solid var(--line);font-size:10px;font-weight:850;letter-spacing:1.2px;color:var(--muted)}.side-drawer{overflow-y:auto}.side-drawer .drawer-note{margin:0 8px 8px;padding:9px 10px;border-radius:9px;background:#f7f8f4;color:var(--muted);font-size:10px;line-height:1.45}.side-drawer a,.side-drawer .drawer-admin{flex-shrink:0}
