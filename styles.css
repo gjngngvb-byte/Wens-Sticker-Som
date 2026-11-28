@@ -41,3 +41,9 @@
 .admin-stats-grid strong{display:block;margin-top:7px;font-size:25px;color:var(--green)}
 .admin-top-list p{padding:9px 0;margin:0;border-bottom:1px solid var(--line);font-size:12px}
 @media(max-width:560px){.discovery{gap:14px}.discovery-block{padding:12px}.discovery-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+.gallery-filters{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+.gallery-filters input{min-width:220px;max-width:300px;width:100%;padding:11px 12px;border:1px solid var(--line);border-radius:10px;background:#fff;color:var(--ink);font:13px system-ui}
+.gallery-filters select{min-width:150px}
+.favorite-toggle[aria-pressed="true"]{color:var(--green);background:var(--green-soft);border:1px solid #cbd9cc}
+@media(max-width:560px){.gallery-filters{display:grid;grid-template-columns:1fr;width:100%}.gallery-filters input,.gallery-filters select{max-width:none;min-width:0;width:100%}}
