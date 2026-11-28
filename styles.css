@@ -11,3 +11,16 @@
 
 /* Menu lateral compartilhado em todas as telas */
 .drawer-section-title{padding:16px 12px 5px;margin-top:5px;border-top:1px solid var(--line);font-size:10px;font-weight:850;letter-spacing:1.2px;color:var(--muted)}.side-drawer{overflow-y:auto}.side-drawer .drawer-note{margin:0 8px 8px;padding:9px 10px;border-radius:9px;background:#f7f8f4;color:var(--muted);font-size:10px;line-height:1.45}.side-drawer a,.side-drawer .drawer-admin{flex-shrink:0}
+
+/* Ferramentas recolhíveis e ordem do menu lateral */
+.drawer-tools{border-radius:11px;background:#f5f6f2;overflow:hidden;flex-shrink:0}
+.drawer-tools summary{list-style:none;cursor:pointer;padding:14px 12px;font-size:14px;font-weight:800;color:var(--ink)}
+.drawer-tools summary::-webkit-details-marker{display:none}
+.drawer-tools summary::after{content:"⌄";float:right;color:var(--muted);transition:transform .15s}
+.drawer-tools[open] summary::after{transform:rotate(180deg)}
+.drawer-tool-links{display:flex;flex-direction:column;gap:2px;padding:0 7px 8px}
+.side-drawer .drawer-tool-links a{padding:11px 9px;font-size:12px;font-weight:650;background:#fff}
+.side-drawer .drawer-tool-links a:hover{background:var(--green-soft)}
+.drawer-admin-area{margin-top:auto;padding-top:12px;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:7px;flex-shrink:0}
+.drawer-admin-area a{font-size:12px}
+.side-drawer{gap:6px}
