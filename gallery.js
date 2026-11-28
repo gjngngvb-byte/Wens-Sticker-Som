@@ -2,7 +2,7 @@ const $=id=>document.getElementById(id);
 const KEY='stickersom-selected-v1';let selected=new Set();let stickers=[];let adminMode=false;let adultAccess=false;let previousCategory='';
 try{selected=new Set(JSON.parse(localStorage.getItem(KEY)||'[]'));}catch{}
 function save(){localStorage.setItem(KEY,JSON.stringify([...selected]));$('selectedCount').textContent=selected.size+' selecionadas';$('sendPackage').disabled=!selected.size;}
-function categoryName(value){return ({engracado:'Engraçado',triste:'Triste',amor:'Amor',raiva:'Raiva',reacoes:'Reações',fofo:'Fofo',jogos:'Jogos',filmes_series:'Filmes e séries',musica:'Música',animais:'Animais',troll:'Troll',adulto:'+18',outros:'Outros'})[value]||value;}
+function categoryName(value){return ({engracado:'Engraçado',triste:'Triste',amor:'Amor',raiva:'Raiva',reacoes:'Reações',fofo:'Fofo',jogos:'Jogos',filmes_series:'Filmes e séries',musica:'Música',animais:'Animais',troll:'Troll',adulto:'Outros',outros:'Outros'})[value]||value;}
 function cardFor(item){
  const card=document.createElement('article');card.className='gallery-card';
  const img=document.createElement('img');img.src=item.media_url;img.alt=item.name;img.loading='lazy';img.tabIndex=0;img.addEventListener('click',()=>openDetail(item));img.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();openDetail(item);}});
@@ -13,7 +13,7 @@ function cardFor(item){
  const select=document.createElement('label');select.className='sticker-select';
  const check=document.createElement('input');check.type='checkbox';check.checked=selected.has(item.id);check.addEventListener('click',e=>e.stopPropagation());check.addEventListener('change',()=>{check.checked?selected.add(item.id):selected.delete(item.id);save();});
  select.append(check,document.createTextNode(' Selecionar'));
- const tag=document.createElement('span');tag.textContent=categoryName(item.category);
+ const tag=document.createElement('span');tag.textContent=(item.is_adult?'+18 · ':'')+categoryName(item.category);
  const open=document.createElement('button');open.type='button';open.className='secondary';open.textContent='Ver figurinha';open.addEventListener('click',()=>openDetail(item));
  const dissolve=document.createElement('button');dissolve.type='button';dissolve.className='secondary';dissolve.textContent=adminMode?'Apagar figurinha':'Dissolver figurinha';dissolve.addEventListener('click',async()=>{if(adminMode){if(!confirm('Apagar esta figurinha permanentemente?'))return;dissolve.disabled=true;try{const r=await fetch('/api/admin/delete',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id:item.id})});const d=await r.json();if(!r.ok)throw Error(d.error||'Falha ao apagar.');selected.delete(item.id);save();await load();await loadAdminRequests();}catch(e){alert(e.message);dissolve.disabled=false;}}else{if(!confirm('Deseja dissolver esta figurinha?'))return;dissolve.disabled=true;try{const r=await fetch('/api/delete-request',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id:item.id})});const d=await r.json();if(!r.ok)throw Error(d.error||'Não foi possível concluir.');alert('Figurinha deletada com sucesso!');}catch(e){alert(e.message);dissolve.disabled=false;}}});card.append(img,tag,title,creator,info,audio,select,open,dissolve);return card;
 }
@@ -21,7 +21,7 @@ function openDetail(item){
  const root=$('detailContent');root.replaceChildren();
  const img=document.createElement('img');img.src=item.media_url;img.alt=item.name;img.style.cssText='width:100%;max-height:260px;object-fit:contain;border-radius:12px';
  const title=document.createElement('h2');title.id='detailTitle';title.textContent=item.name;
- const meta=document.createElement('p');meta.textContent='Categoria: '+categoryName(item.category)+' · '+(item.creator_name?'Criador: '+item.creator_name:'Criador anônimo');
+ const meta=document.createElement('p');meta.textContent='Categoria: '+categoryName(item.category)+(item.is_adult?' · Conteúdo +18':'')+' · '+(item.creator_name?'Criador: '+item.creator_name:'Criador anônimo');
  const info=document.createElement('p');info.textContent=item.info||'Sem descrição adicional.';
  const audio=document.createElement('audio');audio.controls=true;audio.src=item.audio_url;audio.style.width='100%';
  const codeLabel=document.createElement('p');codeLabel.textContent='Código para enviar manualmente pelo WhatsApp:';
