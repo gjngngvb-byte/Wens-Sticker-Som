@@ -360,6 +360,7 @@ const server = createServer(async (req, res) => {
       return json(res, 200, { ok: true, connected: !!connectedPhone, phone: connectedPhone, connectionState });
     }
     if (req.method === 'GET' && url.pathname === '/api/qr') {
+      if (!isAdmin(req)) return json(res,401,{error:'Acesso restrito ao administrador.'});
       return json(res, 200, { ok: true, qr: qrDataUrl, connected: !!connectedPhone });
     }
     if (req.method === 'GET' && url.pathname === '/pair') {
