@@ -233,6 +233,22 @@ const server = createServer(async (req, res) => {
       if(!quarantine.ok) throw new Error('O pedido foi registrado, mas não consegui colocar a figurinha em quarentena.');
       return json(res,200,{ok:true});
     }
+    if (req.method === 'POST' && url.pathname === '/api/admin/reindex-embeddings') {
+      if (!isAdmin(req)) return json(res,401,{error:'Acesso restrito ao administrador.'});
+      if (!OPENAI_API_KEY) return json(res,503,{error:'Configure OPENAI_API_KEY nas variáveis do Render para ativar embeddings semânticos.'});
+      const headers=serviceHeaders();
+      const lookup=await fetch(SUPABASE_URL+'/rest/v1/stickers?select=id,name,category,info,creator_name&status=eq.active&embedding=is.null&limit=100',{headers});
+      if(!lookup.ok) throw new Error('Não consegui localizar as figurinhas que precisam de índice.');
+      const rows=await lookup.json() as Array<{id:string;name:string;category:string;info:string|null;creator_name:string|null}>;
+      let indexed=0;
+      for(const row of rows){
+        const embedding=await createEmbedding({name:row.name,category:row.category,info:row.info||'',creatorName:row.creator_name||'',isAdult:false,mediaType:'image'});
+        if(!embedding) continue;
+        const saved=await fetch(SUPABASE_URL+'/rest/v1/stickers?id=eq.'+encodeURIComponent(row.id),{method:'PATCH',headers:{...headers,'content-type':'application/json','prefer':'return=minimal'},body:JSON.stringify({embedding:`[${embedding.join(',')}]`})});
+        if(saved.ok) indexed++;
+      }
+      return json(res,200,{ok:true,indexed,remaining:Math.max(0,rows.length-indexed)});
+    }
     if (req.method === 'GET' && url.pathname === '/api/admin/stats') {
       if (!isAdmin(req)) return json(res,401,{error:'Acesso restrito ao administrador.'});
       return json(res,200,{ok:true,stats:await rpc('stickersom_admin_stats',{})});
