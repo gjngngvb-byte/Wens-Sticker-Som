@@ -24,3 +24,20 @@
 .drawer-admin-area{margin-top:auto;padding-top:12px;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:7px;flex-shrink:0}
 .drawer-admin-area a{font-size:12px}
 .side-drawer{gap:6px}
+
+
+/* Galeria inteligente e painel administrativo */
+.discovery{display:grid;gap:24px;margin:8px 0 28px}
+.discovery-block{padding:18px;border:1px solid var(--line);border-radius:17px;background:var(--paper)}
+.discovery-heading{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+.discovery-heading h2{font-size:17px;letter-spacing:-.3px;margin:0}
+.discovery-heading p{font-size:11px;color:var(--muted);margin:5px 0 0}
+.discovery-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+.discovery-grid .gallery-card{padding:9px}
+.discovery-grid .gallery-card img{aspect-ratio:1}
+.admin-stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin:14px 0 22px}
+.admin-stats-grid article{padding:13px;border:1px solid var(--line);border-radius:12px;background:#f8f9f5}
+.admin-stats-grid small{display:block;color:var(--muted);font-size:10px}
+.admin-stats-grid strong{display:block;margin-top:7px;font-size:25px;color:var(--green)}
+.admin-top-list p{padding:9px 0;margin:0;border-bottom:1px solid var(--line);font-size:12px}
+@media(max-width:560px){.discovery{gap:14px}.discovery-block{padding:12px}.discovery-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
